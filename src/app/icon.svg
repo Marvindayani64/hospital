@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    Browser-tab icon. Next.js App Router serves any src/app/icon.svg as the
+    favicon automatically.
+
+    Gold tile with a white cross, rather than the white tile used on the gold
+    sign-in panel: a browser tab sits on a light or dark chrome background, and
+    a white tile would disappear against a light one.
+  -->
+  <rect width="32" height="32" rx="9" fill="#c9a227"/>
+  <path d="M16 8.5v15M8.5 16h15" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+</svg>

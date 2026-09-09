@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — a gold-on-white identity.
+ *
+ * Gold carries meaning here rather than decoration: it marks the primary
+ * action, the active navigation item and the brand mark, and nothing else.
+ * Status colours stay conventional (green/amber/red) because a suspended
+ * hospital must read as a warning, not as part of the palette.
+ */
+@theme {
+  --color-gold-50: #fbf8ee;
+  --color-gold-100: #f6efd8;
+  --color-gold-200: #eeddab;
+  --color-gold-300: #e3c87c;
+  --color-gold-400: #d7b153;
+  --color-gold-500: #c9a227;
+  --color-gold-600: #a8851c;
+  --color-gold-700: #856819;
+  --color-gold-800: #6a5317;
+  --color-gold-900: #4d3c12;
+
+  --color-ink-50: #f8f8f7;
+  --color-ink-100: #efeeec;
+  --color-ink-200: #dedcd8;
+  --color-ink-300: #c2beb7;
+  --color-ink-400: #9b958b;
+  --color-ink-500: #7d7669;
+  --color-ink-600: #635d53;
+  --color-ink-700: #4c4740;
+  --color-ink-800: #332f2a;
+  --color-ink-900: #1c1a17;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-ink-50);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Consistent, visible focus ring for keyboard users across all controls. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-gold-500);
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Skeleton placeholder sweep. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--color-ink-100);
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0.6) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer 1.6s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

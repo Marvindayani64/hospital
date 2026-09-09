@@ -1,0 +1,46 @@
+{
+  "name": "hospital-crm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "sync-indexes": "tsx scripts/sync-indexes.ts",
+    "clean:test-data": "tsx scripts/clean-test-data.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "verify:auth": "tsx scripts/verify-auth.ts",
+    "verify:tenancy": "tsx scripts/verify-tenancy.ts",
+    "verify:catalog": "tsx scripts/verify-catalog.ts",
+    "verify:clinical": "tsx scripts/verify-clinical.ts",
+    "verify:forms": "tsx scripts/verify-forms.ts",
+    "verify:visits": "tsx scripts/verify-visits.ts",
+    "verify:billing": "tsx scripts/verify-billing.ts",
+    "verify:admin": "tsx scripts/verify-admin.ts"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.0.11",
+    "mongoose": "^8.9.5",
+    "next": "^15.5.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.2.0",
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^22.10.7",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "dotenv": "^16.4.7",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^15.5.4",
+    "tailwindcss": "^4.1.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
