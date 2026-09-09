@@ -377,6 +377,196 @@ async function main(): Promise<void> {
   );
 
   // -------------------------------------------------------------------------
+  section("Dashboard insights — trends, series, alerts (Section 35)");
+  const insights = await call("/api/dashboard/insights", { jar: alpha.jar });
+  check("Insights returned", insights.status === 200, `got ${insights.status}`);
+
+  check(
+    "Twelve monthly revenue buckets, ending with the current month",
+    (insights.json.data.revenueSeries as any[]).length === 12 &&
+      insights.json.data.revenueSeries[11].month === TODAY.slice(0, 7),
+    insights.json?.data?.revenueSeries?.[11]?.month,
+  );
+  check(
+    "This month's bucket holds only this tenant's payment ($50 -> 5000)",
+    insights.json.data.revenueSeries[11].amountMinor === 5000,
+    String(insights.json?.data?.revenueSeries?.[11]?.amountMinor),
+  );
+  check(
+    "Revenue trend agrees with the series",
+    insights.json.data.trends.revenue?.current === 5000,
+    String(insights.json?.data?.trends?.revenue?.current),
+  );
+
+  check(
+    "Seven daily flow buckets, ending today",
+    (insights.json.data.patientFlow as any[]).length === 7 &&
+      insights.json.data.patientFlow[6].date === TODAY,
+    insights.json?.data?.patientFlow?.[6]?.date,
+  );
+  check(
+    "Today's flow counts this tenant's appointment and visit",
+    insights.json.data.patientFlow[6].appointments === 1 &&
+      insights.json.data.patientFlow[6].visits === 1,
+    JSON.stringify(insights.json?.data?.patientFlow?.[6]),
+  );
+
+  check(
+    "Patient trend counts one registration, not both hospitals'",
+    insights.json.data.trends.patients?.current === 1,
+    String(insights.json?.data?.trends?.patients?.current),
+  );
+  /**
+   * The previous week is empty for a hospital created moments ago, and there
+   * is no honest percentage change from zero — the UI must be handed null
+   * rather than a fabricated "+100%".
+   */
+  check(
+    "changePercent is null when the previous week held nothing",
+    insights.json.data.trends.patients?.previous === 0 &&
+      insights.json.data.trends.patients?.changePercent === null,
+    JSON.stringify(insights.json?.data?.trends?.patients),
+  );
+
+  const alphaAlertIds = (insights.json.data.alerts as any[]).map((a) => a.id);
+  check(
+    "Today's unconfirmed booking raises an alert",
+    alphaAlertIds.includes("unconfirmed-today"),
+    alphaAlertIds.join(","),
+  );
+  check(
+    "Every alert carries a real count and a destination",
+    (insights.json.data.alerts as any[]).every(
+      (a) => a.count > 0 && typeof a.href === "string" && a.href.startsWith("/"),
+    ),
+    JSON.stringify(insights.json?.data?.alerts),
+  );
+  check(
+    "Every approval carries a real count and a destination",
+    (insights.json.data.approvals as any[]).every(
+      (a) => a.count > 0 && typeof a.href === "string" && a.href.startsWith("/"),
+    ),
+    JSON.stringify(insights.json?.data?.approvals),
+  );
+
+  const receptionInsights = await call("/api/dashboard/insights", {
+    jar: receptionJar,
+  });
+  check(
+    "Receptionist's revenue is never computed, not merely hidden",
+    receptionInsights.json.data.trends.revenue === null &&
+      (receptionInsights.json.data.revenueSeries as any[]).length === 0,
+    JSON.stringify(receptionInsights.json?.data?.trends?.revenue),
+  );
+  check(
+    "Receptionist gets no visit trend either",
+    receptionInsights.json.data.trends.visits === null,
+    JSON.stringify(receptionInsights.json?.data?.trends?.visits),
+  );
+  check(
+    "Receptionist DOES get the appointment trend they may see",
+    receptionInsights.json.data.trends.appointments !== null,
+  );
+  check(
+    "No billing alerts reach a receptionist",
+    (receptionInsights.json.data.alerts as any[]).every(
+      (a) => a.href !== "/billing",
+    ),
+    JSON.stringify(receptionInsights.json?.data?.alerts),
+  );
+
+  const accountantInsights = await call("/api/dashboard/insights", {
+    jar: accountantJar,
+  });
+  check(
+    "Accountant DOES get the revenue series",
+    (accountantInsights.json.data.revenueSeries as any[]).length === 12,
+  );
+
+  const superInsights = await call("/api/dashboard/insights", { jar: superJar });
+  check(
+    "Super Admin has no tenant insights",
+    superInsights.status === 403,
+    `got ${superInsights.status}`,
+  );
+
+  // -------------------------------------------------------------------------
+  section("Workspace search");
+  const alphaSearch = await call("/api/search?q=Subject", { jar: alpha.jar });
+  check("Search returns 200", alphaSearch.status === 200, `got ${alphaSearch.status}`);
+  check(
+    "Finds this tenant's own patient",
+    (alphaSearch.json.data.hits as any[]).some(
+      (h) => h.type === "patient" && h.title === "Alpha Subject",
+    ),
+    JSON.stringify(alphaSearch.json?.data?.hits),
+  );
+  check(
+    "Does NOT return the other hospital's patient with the same surname",
+    (alphaSearch.json.data.hits as any[]).every(
+      (h) => h.title !== "Beta Subject",
+    ),
+    JSON.stringify(alphaSearch.json?.data?.hits),
+  );
+
+  const betaSearch = await call("/api/search?q=Alpha", { jar: beta.jar });
+  check(
+    "Hospital B searching for Hospital A's records finds nothing",
+    (betaSearch.json.data.hits as any[]).length === 0,
+    JSON.stringify(betaSearch.json?.data?.hits),
+  );
+
+  const doctorSearch = await call("/api/search?q=Dr.%20Alpha", { jar: alpha.jar });
+  check(
+    "Finds a doctor by name",
+    (doctorSearch.json.data.hits as any[]).some((h) => h.type === "doctor"),
+    JSON.stringify(doctorSearch.json?.data?.hits),
+  );
+
+  const receptionSearch = await call("/api/search?q=Dr.%20Alpha", {
+    jar: receptionJar,
+  });
+  check(
+    "Receptionist may find doctors (they hold doctor.view)",
+    (receptionSearch.json.data.hits as any[]).some((h) => h.type === "doctor"),
+  );
+
+  const receptionInvoiceSearch = await call("/api/search?q=INV-", {
+    jar: receptionJar,
+  });
+  check(
+    "Receptionist searching an invoice number gets nothing (no invoice.view)",
+    (receptionInvoiceSearch.json.data.hits as any[]).every(
+      (h) => h.type !== "invoice",
+    ),
+    JSON.stringify(receptionInvoiceSearch.json?.data?.hits),
+  );
+
+  const accountantInvoiceSearch = await call("/api/search?q=INV-", {
+    jar: accountantJar,
+  });
+  check(
+    "Accountant DOES find invoices",
+    (accountantInvoiceSearch.json.data.hits as any[]).some(
+      (h) => h.type === "invoice",
+    ),
+    JSON.stringify(accountantInvoiceSearch.json?.data?.hits),
+  );
+
+  const singleChar = await call("/api/search?q=a", { jar: alpha.jar });
+  check(
+    "A single character is not searched at all",
+    (singleChar.json.data.hits as any[]).length === 0,
+  );
+
+  const regexProbe = await call("/api/search?q=.%2A", { jar: alpha.jar });
+  check(
+    "Regex metacharacters are matched literally, never executed",
+    (regexProbe.json.data.hits as any[]).length === 0,
+    JSON.stringify(regexProbe.json?.data?.hits),
+  );
+
+  // -------------------------------------------------------------------------
   section("Hospital settings (Section 36)");
   const settings = await call("/api/hospital/settings", { jar: alpha.jar });
   check("Settings readable", settings.status === 200, `got ${settings.status}`);

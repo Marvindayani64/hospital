@@ -58,6 +58,7 @@ export default async function DashboardLayout({
         subtitle: hospital.type.replace(/_/g, " "),
       }}
       navItems={HOSPITAL_NAV}
+      searchable
     >
       {children}
     </AppShell>

@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/States";
 import { useToast } from "@/components/ui/Toast";
 import { PatientFormModal, type PatientRecord } from "@/components/ui/PatientForm";
 import { ApiClientError, api } from "@/lib/client/api";
+import { useInitialSearch } from "@/lib/client/use-initial-search";
 import type { Paginated } from "@/types";
 
 const PAGE_SIZE = 20;
@@ -35,8 +36,11 @@ export function PatientsManager({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  // Seeded from `?search=`, so arriving from the header omnibox lands on a
+  // filtered list rather than page one of everything.
+  const initialSearch = useInitialSearch();
+  const [search, setSearch] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [page, setPage] = useState(1);
 
   const [editing, setEditing] = useState<PatientRecord | "new" | null>(null);

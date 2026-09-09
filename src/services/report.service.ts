@@ -8,6 +8,7 @@ import {
   Patient,
   Payment,
   Treatment,
+  User,
   Visit,
 } from "@/models";
 import { RELEASING_STATUSES } from "@/models/Appointment";
@@ -290,6 +291,480 @@ export async function getDashboardStats(
         status: appointment.status,
       }),
     ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard insights — trends, series, alerts and approvals
+// ---------------------------------------------------------------------------
+
+/**
+ * A week-on-week comparison.
+ *
+ * `changePercent` is null when the previous window was empty. There is no
+ * honest percentage change from zero, and rendering "+100%" for the first
+ * patient a hospital ever registers would be a lie on the executive tile that
+ * matters most.
+ */
+export type Trend = {
+  current: number;
+  previous: number;
+  changePercent: number | null;
+  direction: "up" | "down" | "flat";
+};
+
+export type InsightItem = {
+  id: string;
+  title: string;
+  detail: string;
+  count: number;
+  href: string;
+  severity: "critical" | "warning" | "info";
+};
+
+export type DashboardInsights = {
+  currency: string;
+  today: string;
+  /** Inclusive `YYYY-MM-DD` bounds the trends were computed over. */
+  window: { currentFrom: string; previousFrom: string };
+  trends: {
+    patients: Trend | null;
+    appointments: Trend | null;
+    visits: Trend | null;
+    /** Minor units collected. */
+    revenue: Trend | null;
+  };
+  revenueSeries: Array<{
+    month: string;
+    label: string;
+    amountMinor: number;
+    amountFormatted: string;
+  }>;
+  patientFlow: Array<{
+    date: string;
+    label: string;
+    appointments: number;
+    visits: number;
+  }>;
+  alerts: InsightItem[];
+  approvals: InsightItem[];
+};
+
+/** `YYYY-MM-DD` shifted by whole days, without touching the server timezone. */
+function addDays(dateString: string, delta: number): string {
+  const [year, month, day] = dateString.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Midnight local, matching the convention `monthStartDate()` already uses. */
+function startOfLocalDay(dateString: string): Date {
+  const [year, month, day] = dateString.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  return new Date(year, month - 1, day);
+}
+
+function trend(current: number, previous: number): Trend {
+  return {
+    current,
+    previous,
+    changePercent:
+      previous === 0 ? null : Math.round(((current - previous) / previous) * 100),
+    direction: current > previous ? "up" : current < previous ? "down" : "flat",
+  };
+}
+
+const SHORT_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+const SHORT_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/**
+ * Everything the command dashboard shows beyond the plain counters (Section 35).
+ *
+ * Kept separate from `getDashboardStats` so `/api/dashboard/stats` keeps its
+ * existing shape, and so a caller that only wants the counters does not pay for
+ * the aggregations. The permission rule is identical: a figure the caller may
+ * not see is never computed, not merely hidden.
+ */
+export async function getDashboardInsights(
+  user: AuthContext & { hospitalId: string },
+): Promise<DashboardInsights> {
+  await connectToDatabase();
+
+  const hospitalId = user.hospitalId;
+  const tenantOid = new mongoose.Types.ObjectId(hospitalId);
+  const today = todayDateString();
+
+  const hospital = await Hospital.findById(hospitalId).select("currency").lean();
+  const currency = hospital?.currency ?? DEFAULT_CURRENCY;
+
+  const canPatients = has(user, "patient.view");
+  const canAppointments = has(user, "appointment.view");
+  const canVisits = has(user, "visit.view");
+  const canInvoices = has(user, "invoice.view");
+  const canPayments = has(user, "payment.view");
+  const canUsers = has(user, "user.view");
+
+  // Two adjacent seven-day windows, both inclusive of their first day.
+  const currentFrom = addDays(today, -6);
+  const previousFrom = addDays(today, -13);
+  const currentFromDate = startOfLocalDay(currentFrom);
+  const previousFromDate = startOfLocalDay(previousFrom);
+
+  /** Twelve buckets ending with the current month. */
+  const now = new Date();
+  const seriesMonths: Array<{ key: string; label: string }> = [];
+  for (let offset = 11; offset >= 0; offset -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    seriesMonths.push({
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
+      label: SHORT_MONTHS[date.getMonth()]!,
+    });
+  }
+  const seriesStart = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+  /** The seven days ending today, oldest first. */
+  const flowDays = Array.from({ length: 7 }, (_, index) =>
+    addDays(today, index - 6),
+  );
+
+  const thirtyDaysAgo = startOfLocalDay(addDays(today, -30));
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  type Pair = { _id: null; current: number; previous: number };
+
+  const [
+    patientPair,
+    appointmentPair,
+    visitPair,
+    revenuePair,
+    revenueRows,
+    appointmentFlowRows,
+    visitFlowRows,
+    runningLate,
+    unconfirmedToday,
+    followUpsOverdue,
+    overdueInvoiceRows,
+    draftInvoices,
+    unconfirmedUpcoming,
+    pendingStaff,
+  ] = await Promise.all([
+    canPatients
+      ? Patient.aggregate<Pair>([
+          { $match: { hospitalId: tenantOid, createdAt: { $gte: previousFromDate } } },
+          {
+            $group: {
+              _id: null,
+              current: { $sum: { $cond: [{ $gte: ["$createdAt", currentFromDate] }, 1, 0] } },
+              previous: { $sum: { $cond: [{ $lt: ["$createdAt", currentFromDate] }, 1, 0] } },
+            },
+          },
+        ])
+      : [],
+    canAppointments
+      ? Appointment.aggregate<Pair>([
+          {
+            $match: {
+              hospitalId: tenantOid,
+              appointmentDate: { $gte: previousFrom, $lte: today },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              current: { $sum: { $cond: [{ $gte: ["$appointmentDate", currentFrom] }, 1, 0] } },
+              previous: { $sum: { $cond: [{ $lt: ["$appointmentDate", currentFrom] }, 1, 0] } },
+            },
+          },
+        ])
+      : [],
+    canVisits
+      ? Visit.aggregate<Pair>([
+          {
+            $match: {
+              hospitalId: tenantOid,
+              visitDate: { $gte: previousFrom, $lte: today },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              current: { $sum: { $cond: [{ $gte: ["$visitDate", currentFrom] }, 1, 0] } },
+              previous: { $sum: { $cond: [{ $lt: ["$visitDate", currentFrom] }, 1, 0] } },
+            },
+          },
+        ])
+      : [],
+    canPayments
+      ? Payment.aggregate<Pair>([
+          { $match: { hospitalId: tenantOid, paidAt: { $gte: previousFromDate } } },
+          {
+            $group: {
+              _id: null,
+              current: {
+                $sum: { $cond: [{ $gte: ["$paidAt", currentFromDate] }, "$amountMinor", 0] },
+              },
+              previous: {
+                $sum: { $cond: [{ $lt: ["$paidAt", currentFromDate] }, "$amountMinor", 0] },
+              },
+            },
+          },
+        ])
+      : [],
+    /**
+     * Monthly collections. `$dateToString` buckets in UTC — the hospital's own
+     * timezone is not modelled yet (see utils/time.ts), so a payment taken
+     * within a few hours of midnight can land in the neighbouring month. That
+     * is acceptable for a trend line and wrong for an accounting report, which
+     * is why the Reports page computes its figures from an explicit range.
+     */
+    canPayments
+      ? Payment.aggregate<{ _id: string; total: number }>([
+          { $match: { hospitalId: tenantOid, paidAt: { $gte: seriesStart } } },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$paidAt" } },
+              total: { $sum: "$amountMinor" },
+            },
+          },
+        ])
+      : [],
+    canAppointments
+      ? Appointment.aggregate<{ _id: string; count: number }>([
+          {
+            $match: {
+              hospitalId: tenantOid,
+              appointmentDate: { $gte: flowDays[0]!, $lte: today },
+              status: { $nin: [...RELEASING_STATUSES] },
+            },
+          },
+          { $group: { _id: "$appointmentDate", count: { $sum: 1 } } },
+        ])
+      : [],
+    canVisits
+      ? Visit.aggregate<{ _id: string; count: number }>([
+          {
+            $match: {
+              hospitalId: tenantOid,
+              visitDate: { $gte: flowDays[0]!, $lte: today },
+            },
+          },
+          { $group: { _id: "$visitDate", count: { $sum: 1 } } },
+        ])
+      : [],
+    canAppointments
+      ? Appointment.countDocuments(
+          tenantScoped(hospitalId, {
+            appointmentDate: today,
+            status: mongoose.trusted({ $in: ["scheduled", "confirmed", "checked_in"] }),
+            startMinutes: mongoose.trusted({ $lt: nowMinutes }),
+          }),
+        )
+      : 0,
+    canAppointments
+      ? Appointment.countDocuments(
+          tenantScoped(hospitalId, { appointmentDate: today, status: "scheduled" }),
+        )
+      : 0,
+    canVisits
+      ? Visit.countDocuments(
+          tenantScoped(hospitalId, {
+            followUpDate: mongoose.trusted({ $ne: null, $lt: today }),
+          }),
+        )
+      : 0,
+    /**
+     * Issued more than 30 days ago and still not settled. Outstanding is
+     * derived from the payment ledger for the same reason paid-ness always is
+     * (Phase 7): a stored flag could disagree with the money actually received.
+     */
+    canInvoices
+      ? Invoice.aggregate<{ _id: null; count: number; outstanding: number }>([
+          {
+            $match: {
+              hospitalId: tenantOid,
+              status: "issued",
+              issuedAt: { $ne: null, $lt: thirtyDaysAgo },
+            },
+          },
+          {
+            $lookup: {
+              from: Payment.collection.name,
+              localField: "_id",
+              foreignField: "invoiceId",
+              as: "ledger",
+            },
+          },
+          { $addFields: { paidMinor: { $sum: "$ledger.amountMinor" } } },
+          { $match: { $expr: { $gt: ["$totalMinor", "$paidMinor"] } } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              outstanding: { $sum: { $subtract: ["$totalMinor", "$paidMinor"] } },
+            },
+          },
+        ])
+      : [],
+    canInvoices
+      ? Invoice.countDocuments(tenantScoped(hospitalId, { status: "draft" }))
+      : 0,
+    canAppointments
+      ? Appointment.countDocuments(
+          tenantScoped(hospitalId, {
+            appointmentDate: mongoose.trusted({ $gt: today }),
+            status: "scheduled",
+          }),
+        )
+      : 0,
+    canUsers
+      ? User.countDocuments(
+          tenantScoped(hospitalId, { mustChangePassword: true, status: "active" }),
+        )
+      : 0,
+  ]);
+
+  const revenueByMonth = new Map(revenueRows.map((row) => [row._id, row.total]));
+  const appointmentsByDay = new Map(
+    appointmentFlowRows.map((row) => [row._id, row.count]),
+  );
+  const visitsByDay = new Map(visitFlowRows.map((row) => [row._id, row.count]));
+
+  const alerts: InsightItem[] = [];
+
+  if (runningLate > 0) {
+    alerts.push({
+      id: "running-late",
+      severity: "critical",
+      title: "Appointments past their start time",
+      detail: `${runningLate} patient${runningLate === 1 ? " is" : "s are"} still waiting to be seen.`,
+      count: runningLate,
+      href: "/appointments",
+    });
+  }
+
+  const overdueInvoices = overdueInvoiceRows[0];
+  if (overdueInvoices && overdueInvoices.count > 0) {
+    alerts.push({
+      id: "overdue-invoices",
+      severity: "critical",
+      title: "Invoices unpaid past 30 days",
+      detail: `${formatMoney(overdueInvoices.outstanding, currency)} outstanding across ${overdueInvoices.count} invoice${overdueInvoices.count === 1 ? "" : "s"}.`,
+      count: overdueInvoices.count,
+      href: "/billing",
+    });
+  }
+
+  if (followUpsOverdue > 0) {
+    alerts.push({
+      id: "follow-ups-overdue",
+      severity: "warning",
+      title: "Follow-ups overdue",
+      detail: `${followUpsOverdue} patient${followUpsOverdue === 1 ? " was" : "s were"} due back before today.`,
+      count: followUpsOverdue,
+      href: "/visits",
+    });
+  }
+
+  if (unconfirmedToday > 0) {
+    alerts.push({
+      id: "unconfirmed-today",
+      severity: "warning",
+      title: "Today's bookings unconfirmed",
+      detail: `${unconfirmedToday} appointment${unconfirmedToday === 1 ? " has" : "s have"} not been confirmed with the patient.`,
+      count: unconfirmedToday,
+      href: "/appointments",
+    });
+  }
+
+  const approvals: InsightItem[] = [];
+
+  if (draftInvoices > 0) {
+    approvals.push({
+      id: "draft-invoices",
+      severity: "info",
+      title: "Draft invoices awaiting issue",
+      detail: "Nothing is owed by the patient until an invoice is issued.",
+      count: draftInvoices,
+      href: "/billing",
+    });
+  }
+
+  if (unconfirmedUpcoming > 0) {
+    approvals.push({
+      id: "unconfirmed-upcoming",
+      severity: "info",
+      title: "Upcoming bookings to confirm",
+      detail: "Scheduled but not yet confirmed with the patient.",
+      count: unconfirmedUpcoming,
+      href: "/appointments",
+    });
+  }
+
+  if (pendingStaff > 0) {
+    approvals.push({
+      id: "pending-staff",
+      severity: "info",
+      title: "Staff yet to set a password",
+      detail: "These accounts still hold their temporary password.",
+      count: pendingStaff,
+      href: "/users",
+    });
+  }
+
+  return {
+    currency,
+    today,
+    window: { currentFrom, previousFrom },
+    trends: {
+      patients: canPatients
+        ? trend(patientPair[0]?.current ?? 0, patientPair[0]?.previous ?? 0)
+        : null,
+      appointments: canAppointments
+        ? trend(appointmentPair[0]?.current ?? 0, appointmentPair[0]?.previous ?? 0)
+        : null,
+      visits: canVisits
+        ? trend(visitPair[0]?.current ?? 0, visitPair[0]?.previous ?? 0)
+        : null,
+      revenue: canPayments
+        ? trend(revenuePair[0]?.current ?? 0, revenuePair[0]?.previous ?? 0)
+        : null,
+    },
+    revenueSeries: canPayments
+      ? seriesMonths.map((month) => {
+          const amountMinor = revenueByMonth.get(month.key) ?? 0;
+          return {
+            month: month.key,
+            label: month.label,
+            amountMinor,
+            amountFormatted: formatMoney(amountMinor, currency),
+          };
+        })
+      : [],
+    patientFlow:
+      canAppointments || canVisits
+        ? flowDays.map((date) => ({
+            date,
+            label: SHORT_WEEKDAYS[
+              new Date(`${date}T00:00:00Z`).getUTCDay()
+            ]!,
+            appointments: appointmentsByDay.get(date) ?? 0,
+            visits: visitsByDay.get(date) ?? 0,
+          }))
+        : [],
+    alerts,
+    approvals,
   };
 }
 

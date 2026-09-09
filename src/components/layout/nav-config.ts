@@ -14,6 +14,13 @@ export type NavItem = {
   permissions: Permission[];
   /** False until the module's pages land in a later phase. */
   available: boolean;
+  /**
+   * Sidebar section heading. Items sharing a group are rendered under one
+   * heading, in the order they appear here. Omit for a top-level item.
+   *
+   * Purely presentational — grouping never affects what a user may reach.
+   */
+  group?: string;
 };
 
 export type NavIcon =
@@ -49,6 +56,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "patients",
     permissions: ["patient.view"],
     available: true,
+    group: "Clinical",
   },
   {
     label: "Appointments",
@@ -56,34 +64,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "appointments",
     permissions: ["appointment.view"],
     available: true,
-  },
-  {
-    label: "Doctors",
-    href: "/doctors",
-    icon: "doctors",
-    permissions: ["doctor.view"],
-    available: true,
-  },
-  {
-    label: "Departments",
-    href: "/departments",
-    icon: "departments",
-    permissions: ["department.view"],
-    available: true,
-  },
-  {
-    label: "Treatments",
-    href: "/treatments",
-    icon: "treatments",
-    permissions: ["treatment.view"],
-    available: true,
-  },
-  {
-    label: "Forms",
-    href: "/forms",
-    icon: "forms",
-    permissions: ["form.view"],
-    available: true,
+    group: "Clinical",
   },
   {
     label: "Visits",
@@ -91,6 +72,39 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "visits",
     permissions: ["visit.view"],
     available: true,
+    group: "Clinical",
+  },
+  {
+    label: "Forms",
+    href: "/forms",
+    icon: "forms",
+    permissions: ["form.view"],
+    available: true,
+    group: "Clinical",
+  },
+  {
+    label: "Doctors",
+    href: "/doctors",
+    icon: "doctors",
+    permissions: ["doctor.view"],
+    available: true,
+    group: "Practice",
+  },
+  {
+    label: "Departments",
+    href: "/departments",
+    icon: "departments",
+    permissions: ["department.view"],
+    available: true,
+    group: "Practice",
+  },
+  {
+    label: "Treatments",
+    href: "/treatments",
+    icon: "treatments",
+    permissions: ["treatment.view"],
+    available: true,
+    group: "Practice",
   },
   {
     label: "Billing",
@@ -98,6 +112,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "billing",
     permissions: ["invoice.view", "payment.view"],
     available: true,
+    group: "Finance & Insights",
   },
   {
     /**
@@ -116,6 +131,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
       "patient.view",
     ],
     available: true,
+    group: "Finance & Insights",
   },
   {
     label: "Staff",
@@ -123,6 +139,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "users",
     permissions: ["user.view"],
     available: true,
+    group: "Administration",
   },
   {
     label: "Roles",
@@ -130,6 +147,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "roles",
     permissions: ["role.view"],
     available: true,
+    group: "Administration",
   },
   {
     label: "Settings",
@@ -137,6 +155,7 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     icon: "settings",
     permissions: ["hospital.settings.view"],
     available: true,
+    group: "Administration",
   },
 ] as const;
 
@@ -169,4 +188,29 @@ export function visibleNavItems(
       permissions.includes(permission),
     );
   });
+}
+
+export type NavSection = { group: string | null; items: NavItem[] };
+
+/**
+ * Splits the visible items into sidebar sections, preserving declaration order.
+ *
+ * A heading only appears when something under it survived the permission
+ * filter, so a receptionist never sees an empty "Finance & Insights" label.
+ */
+export function navSections(
+  items: readonly NavItem[],
+  permissions: readonly Permission[],
+): NavSection[] {
+  const sections: NavSection[] = [];
+
+  for (const item of visibleNavItems(items, permissions)) {
+    const group = item.group ?? null;
+    const last = sections[sections.length - 1];
+
+    if (last && last.group === group) last.items.push(item);
+    else sections.push({ group, items: [item] });
+  }
+
+  return sections;
 }

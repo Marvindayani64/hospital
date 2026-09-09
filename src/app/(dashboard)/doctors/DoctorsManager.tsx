@@ -9,6 +9,7 @@ import { ComboField, SelectField, TextField } from "@/components/ui/Field";
 import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/States";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
+import { useInitialSearch } from "@/lib/client/use-initial-search";
 import { SPECIALISATION_SUGGESTIONS } from "@/lib/domain/suggestions";
 import { WEEKDAY_NAMES } from "@/utils/time";
 import type { Currency } from "@/utils/money";
@@ -64,8 +65,11 @@ export function DoctorsManager({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  // Seeded from `?search=`, so arriving from the header omnibox lands on a
+  // filtered list rather than page one of everything.
+  const initialSearch = useInitialSearch();
+  const [search, setSearch] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
 

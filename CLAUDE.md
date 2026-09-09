@@ -16,7 +16,7 @@ Run the **one suite that covers what you touched**, not all eight:
 | `verify:forms` | form builder, responses, versioning |
 | `verify:visits` | visits, consultations |
 | `verify:billing` | invoices, payments |
-| `verify:admin` | dashboard, settings, audit log, reports |
+| `verify:admin` | dashboard, insights, header search, settings, audit log, reports |
 
 Run **all eight only** before declaring a phase complete, or after changing
 something shared: `middleware.ts`, `lib/auth/*`, `lib/tenant/scope.ts`,
