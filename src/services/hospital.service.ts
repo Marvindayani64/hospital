@@ -71,6 +71,28 @@ export async function createHospitalWithAdmin(
 ): Promise<CreateHospitalResult> {
   await connectToDatabase();
 
+  const adminEmail = input.adminEmail.trim().toLowerCase();
+  const hospitalEmail = input.email.trim().toLowerCase();
+
+  const [existingAdmin, existingHospital] = await Promise.all([
+    User.findOne({ email: adminEmail }),
+    Hospital.findOne({ email: hospitalEmail }),
+  ]);
+
+  const fields: Record<string, string> = {};
+  if (existingAdmin) {
+    fields.adminEmail = "An account with this administrator email address already exists.";
+  }
+  if (existingHospital) {
+    fields.email = "A hospital with this contact email address already exists.";
+  }
+
+  if (Object.keys(fields).length > 0) {
+    throw ApiError.validation("Please correct the highlighted fields.", {
+      fields,
+    });
+  }
+
   const temporaryPassword =
     input.temporaryPassword ?? generateTemporaryPassword();
   const passwordHash = await hashPassword(temporaryPassword);

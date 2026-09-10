@@ -4,10 +4,11 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
-import { SelectField, TextAreaField, TextField } from "@/components/ui/Field";
+import { EmailField, PhoneField, SelectField, TextAreaField, TextField } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
+import { emailSchema, phoneSchema } from "@/schemas/common";
 import { createHospitalSchema } from "@/schemas/hospital.schema";
 import { HOSPITAL_TYPES } from "@/types";
 
@@ -49,38 +50,89 @@ const INITIAL_FORM = {
 type FormKey = keyof typeof INITIAL_FORM;
 
 /**
- * Validates with the SAME schema the API parses, imported rather than restated
- * so the two cannot drift. A convenience for the operator, never a control —
- * the server re-validates every field regardless.
- *
- * `temporaryPassword` is omitted when blank, exactly as the submit does: the
- * schema's `.min(8)` must not fire on an empty field that legitimately means
- * "generate one on the server".
+ * Validates using the common schemas imported from `@/schemas/common`.
+ * A convenience for the operator, never a control — the server re-validates
+ * every field regardless.
  */
 function validate(form: typeof INITIAL_FORM): Record<string, string> {
-  const candidate: Record<string, string> = { ...form };
-  if (!candidate.temporaryPassword) delete candidate.temporaryPassword;
-
-  const result = createHospitalSchema.safeParse(candidate);
-  if (result.success) return {};
-
   const errors: Record<string, string> = {};
-  for (const issue of result.error.issues) {
-    const path = issue.path.join(".");
-    // First message per field wins, matching how the API reports them.
-    if (path && !(path in errors)) errors[path] = issue.message;
+
+  if (!form.name.trim()) {
+    errors.name = "Hospital name is required.";
+  } else if (form.name.trim().length < 2) {
+    errors.name = "Hospital name must be at least 2 characters.";
   }
+
+  if (!form.type) {
+    errors.type = "Hospital type is required.";
+  }
+
+  const emailRes = emailSchema.safeParse(form.email);
+  if (!emailRes.success) {
+    errors.email = emailRes.error.issues[0]?.message ?? "Enter a valid email address.";
+  }
+
+  const phoneRes = phoneSchema.safeParse(form.phone);
+  if (!phoneRes.success) {
+    errors.phone = phoneRes.error.issues[0]?.message ?? "Enter a valid 10-digit mobile number";
+  }
+
+  if (!form.address.trim()) {
+    errors.address = "Address is required.";
+  } else if (form.address.trim().length < 5) {
+    errors.address = "Address must be at least 5 characters.";
+  }
+
+  if (!form.city.trim()) {
+    errors.city = "City is required.";
+  } else if (form.city.trim().length < 2) {
+    errors.city = "City must be at least 2 characters.";
+  }
+
+  if (!form.state.trim()) {
+    errors.state = "State / Province is required.";
+  } else if (form.state.trim().length < 2) {
+    errors.state = "State / Province must be at least 2 characters.";
+  }
+
+  if (!form.country.trim()) {
+    errors.country = "Country is required.";
+  } else if (form.country.trim().length < 2) {
+    errors.country = "Country must be at least 2 characters.";
+  }
+
+  if (!form.postalCode.trim()) {
+    errors.postalCode = "Postal code is required.";
+  } else {
+    const candidate: Record<string, string> = { ...form };
+    const parsed = createHospitalSchema.safeParse(candidate);
+    if (!parsed.success) {
+      const issue = parsed.error.issues.find((i) => i.path.join(".") === "postalCode");
+      if (issue) errors.postalCode = issue.message;
+    }
+  }
+
+  if (!form.adminName.trim()) {
+    errors.adminName = "Admin name is required.";
+  } else if (form.adminName.trim().length < 2) {
+    errors.adminName = "Admin name must be at least 2 characters.";
+  }
+
+  const adminEmailRes = emailSchema.safeParse(form.adminEmail);
+  if (!adminEmailRes.success) {
+    errors.adminEmail = adminEmailRes.error.issues[0]?.message ?? "Enter a valid email address.";
+  }
+
+  if (form.temporaryPassword && form.temporaryPassword.trim().length > 0 && form.temporaryPassword.length < 8) {
+    errors.temporaryPassword = "Temporary password must be at least 8 characters.";
+  }
+
   return errors;
 }
 
 const PASSWORD_ALPHABET =
-  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+?";
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
 
-/**
- * Client-side convenience so the Super Admin can see the password before
- * submitting. Uses Web Crypto, never Math.random. Leaving the field blank is
- * equally valid — the server generates one with the same policy.
- */
 function generatePassword(length = 14): string {
   const values = new Uint32Array(length);
   crypto.getRandomValues(values);
@@ -89,9 +141,7 @@ function generatePassword(length = 14): string {
   for (const value of values) {
     password += PASSWORD_ALPHABET[value % PASSWORD_ALPHABET.length];
   }
-
-  // Guarantee one of each required class regardless of what the draw produced.
-  return `${password.slice(0, length - 4)}Aa9!`;
+  return password;
 }
 
 export function CreateHospitalForm() {
@@ -241,27 +291,21 @@ export function CreateHospitalForm() {
               options={TYPE_OPTIONS}
               required
             />
-            <TextField
+            <EmailField
               label="Email"
-              type="email"
               value={form.email}
               onChange={(event) => update("email", event.target.value)}
               onBlur={() => markTouched("email")}
               error={errorFor("email")}
               placeholder="contact@hospital.com"
-              maxLength={254}
               required
             />
-            <TextField
+            <PhoneField
               label="Phone"
-              type="tel"
               value={form.phone}
-              onChange={(event) => update("phone", event.target.value)}
+              onChange={(value) => update("phone", value)}
               onBlur={() => markTouched("phone")}
               error={errorFor("phone")}
-              placeholder="+91 22 2345 6789"
-              inputMode="tel"
-              maxLength={30}
               required
             />
             <div className="sm:col-span-2">
@@ -273,7 +317,7 @@ export function CreateHospitalForm() {
                 onBlur={() => markTouched("address")}
                 error={errorFor("address")}
                 maxLength={300}
-                hint="Optional."
+                required
               />
             </div>
             <TextField
@@ -283,7 +327,7 @@ export function CreateHospitalForm() {
               onBlur={() => markTouched("city")}
               error={errorFor("city")}
               maxLength={100}
-              hint="Optional."
+              required
             />
             <TextField
               label="State / Province"
@@ -292,7 +336,7 @@ export function CreateHospitalForm() {
               onBlur={() => markTouched("state")}
               error={errorFor("state")}
               maxLength={100}
-              hint="Optional."
+              required
             />
             <TextField
               label="Country"
@@ -301,7 +345,7 @@ export function CreateHospitalForm() {
               onBlur={() => markTouched("country")}
               error={errorFor("country")}
               maxLength={100}
-              hint="Optional."
+              required
             />
             <TextField
               label="Postal code"
@@ -310,7 +354,7 @@ export function CreateHospitalForm() {
               onBlur={() => markTouched("postalCode")}
               error={errorFor("postalCode")}
               maxLength={20}
-              hint="Optional."
+              required
             />
             {/*
               Logo is set by the hospital itself under Settings, and currency
@@ -344,15 +388,13 @@ export function CreateHospitalForm() {
               maxLength={150}
               required
             />
-            <TextField
+            <EmailField
               label="Admin email"
-              type="email"
               value={form.adminEmail}
               onChange={(event) => update("adminEmail", event.target.value)}
               onBlur={() => markTouched("adminEmail")}
               error={errorFor("adminEmail")}
               placeholder="admin@hospital.com"
-              maxLength={254}
               required
             />
 

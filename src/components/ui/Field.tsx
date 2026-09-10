@@ -109,6 +109,117 @@ export function TextField({
   );
 }
 
+export type PhoneFieldProps = Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  "onChange" | "value"
+> & {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  hint?: ReactNode;
+  placeholder?: string;
+};
+
+export function PhoneField({
+  label,
+  value,
+  onChange,
+  error,
+  hint,
+  className,
+  id,
+  required,
+  placeholder = "98765 43210",
+  ...rest
+}: PhoneFieldProps) {
+  const generatedId = useId();
+  const fieldId = id ?? generatedId;
+  const describedBy = error || hint ? `${fieldId}-description` : undefined;
+
+  let phoneNumber = value;
+  if (value.startsWith("+91")) {
+    phoneNumber = value.slice(3).trim();
+  } else if (value.startsWith("91") && value.length > 10) {
+    phoneNumber = value.slice(2).trim();
+  } else if (value.startsWith("+")) {
+    const spaceIndex = value.indexOf(" ");
+    if (spaceIndex !== -1) {
+      phoneNumber = value.slice(spaceIndex + 1).trim();
+    } else {
+      phoneNumber = value.replace(/^\+\d{1,4}/, "").trim();
+    }
+  }
+
+  function handleNumberChange(val: string) {
+    const cleanVal = val.trim();
+    onChange(cleanVal ? `+91 ${cleanVal}` : "");
+  }
+
+  return (
+    <FieldShell
+      label={label}
+      htmlFor={fieldId}
+      error={error}
+      hint={hint}
+      required={required}
+    >
+      <div
+        className={cn(
+          "flex rounded-lg border bg-white overflow-hidden transition-colors h-10",
+          error
+            ? "border-red-400 focus-within:border-red-500 focus-within:ring-1 focus-within:ring-red-500"
+            : "border-ink-200 hover:border-ink-300 focus-within:border-gold-500 focus-within:ring-1 focus-within:ring-gold-500 focus-within:hover:border-gold-500",
+        )}
+      >
+        <span className="inline-flex shrink-0 items-center bg-ink-50 px-3 text-xs font-semibold text-ink-600 border-r border-ink-200 select-none tracking-wide">
+          +91
+        </span>
+        <input
+          id={fieldId}
+          type="tel"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+          required={required}
+          value={phoneNumber}
+          onChange={(e) => handleNumberChange(e.target.value)}
+          placeholder={placeholder}
+          className={cn(
+            "w-full min-w-0 bg-transparent px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 h-full",
+            className,
+          )}
+          style={{ outline: "none", boxShadow: "none" }}
+          {...rest}
+        />
+      </div>
+    </FieldShell>
+  );
+}
+
+export type EmailFieldProps = TextFieldProps;
+
+export function EmailField({
+  label = "Email",
+  placeholder = "name@example.com",
+  autoComplete = "email",
+  inputMode = "email",
+  type = "email",
+  maxLength = 254,
+  ...rest
+}: EmailFieldProps) {
+  return (
+    <TextField
+      label={label}
+      type={type}
+      placeholder={placeholder}
+      autoComplete={autoComplete}
+      inputMode={inputMode}
+      maxLength={maxLength}
+      {...rest}
+    />
+  );
+}
+
 export type ComboFieldProps = {
   label: string;
   value: string;

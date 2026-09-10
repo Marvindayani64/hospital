@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { paginationSchema } from "@/schemas/common";
-import { emailSchema } from "@/schemas/auth.schema";
+import {
+  optionalEmailSchema,
+  optionalPhoneSchema,
+  paginationSchema,
+} from "@/schemas/common";
 import { DATE_PATTERN, isValidDateString } from "@/utils/time";
 
 /**
@@ -14,8 +17,8 @@ import { DATE_PATTERN, isValidDateString } from "@/utils/time";
 export const updateSettingsSchema = z
   .object({
     name: z.string().trim().min(2).max(200).optional(),
-    email: emailSchema.optional(),
-    phone: z.string().trim().min(5).max(30).optional(),
+    email: optionalEmailSchema.optional(),
+    phone: optionalPhoneSchema.optional(),
     logo: z
       .union([z.literal(""), z.string().trim().url("Logo must be a valid URL.").max(500)])
       .optional(),

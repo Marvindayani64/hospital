@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { TextAreaField, TextField } from "@/components/ui/Field";
+import { EmailField, PhoneField, TextAreaField, TextField } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
 import { AuditLogPanel } from "@/app/(dashboard)/settings/AuditLogPanel";
@@ -190,19 +190,18 @@ export function SettingsManager({
                 onChange={(event) => update("name", event.target.value)}
                 error={fieldErrors.name}
               />
-              <TextField
+              <EmailField
                 label="Contact email"
-                type="email"
                 value={form.email}
                 disabled={!canUpdate}
                 onChange={(event) => update("email", event.target.value)}
                 error={fieldErrors.email}
               />
-              <TextField
+              <PhoneField
                 label="Phone"
                 value={form.phone}
                 disabled={!canUpdate}
-                onChange={(event) => update("phone", event.target.value)}
+                onChange={(val) => update("phone", val)}
                 error={fieldErrors.phone}
               />
               <TextField

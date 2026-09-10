@@ -1,7 +1,13 @@
 import { z } from "zod";
-import { paginationSchema, searchSchema } from "@/schemas/common";
+import {
+  emailSchema,
+  optionalEmailSchema,
+  optionalPhoneSchema,
+  paginationSchema,
+  phoneSchema,
+  searchSchema,
+} from "@/schemas/common";
 import { GENDERS } from "@/lib/domain/enums";
-import { INDIA_PHONE_MESSAGE, isIndianMobile } from "@/lib/domain/phone";
 import { isValidDateString } from "@/utils/time";
 
 /**
@@ -34,58 +40,17 @@ const dateOfBirthBase = z
     { message: "Date of birth cannot be in the future." },
   );
 
-/**
- * Patient phone numbers are Indian mobile numbers. The rule and its message
- * live in `lib/domain/phone` so the form and the API enforce one definition.
- *
- * Landlines are deliberately not accepted: a patient's contact number is what
- * appointment and billing contact hangs off, and mobile is what a clinic can
- * actually reach and message.
- */
-const requiredPhone = z
-  .string()
-  .trim()
-  .min(1, "Phone number is required.")
-  .max(30)
-  .refine(isIndianMobile, { message: INDIA_PHONE_MESSAGE });
-
-const optionalPhone = z
-  .string()
-  .trim()
-  .max(30)
-  .refine((value) => value === "" || isIndianMobile(value), {
-    message: INDIA_PHONE_MESSAGE,
-  });
-
 const emergencyContactBase = z.object({
   name: z.string().trim().max(150).optional().default(""),
   relationship: z.string().trim().max(80).optional().default(""),
-  phone: optionalPhone.optional().default(""),
+  phone: optionalPhoneSchema.optional().default(""),
 });
-
-/**
- * Optional, but a real address when supplied.
- *
- * Expressed as a refinement on a single string rather than a union with
- * `z.literal("")`: a failing union reports itself as a bare "Invalid input",
- * which is useless as a message under a field. The accepted set is unchanged —
- * empty, or a valid address of at most 254 characters.
- */
-const emailBase = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .max(254, "Email address is too long.")
-  .refine(
-    (value) => value === "" || z.string().email().safeParse(value).success,
-    { message: "Enter a valid email address." },
-  );
 
 export const createPatientSchema = z.object({
   firstName: z.string().trim().min(1, "First name is required.").max(100),
   lastName: z.string().trim().min(1, "Last name is required.").max(100),
-  phone: requiredPhone,
-  email: emailBase.optional().default(""),
+  phone: phoneSchema,
+  email: emailSchema,
   dateOfBirth: dateOfBirthBase.optional().default(""),
   gender: z.enum(GENDERS).default("prefer_not_to_say"),
   address: z.string().trim().max(300).optional().default(""),
@@ -99,8 +64,8 @@ export const updatePatientSchema = z
   .object({
     firstName: z.string().trim().min(1).max(100).optional(),
     lastName: z.string().trim().min(1).max(100).optional(),
-    phone: requiredPhone.optional(),
-    email: emailBase.optional(),
+    phone: optionalPhoneSchema.optional(),
+    email: optionalEmailSchema.optional(),
     dateOfBirth: dateOfBirthBase.optional(),
     gender: z.enum(GENDERS).optional(),
     address: z.string().trim().max(300).optional(),

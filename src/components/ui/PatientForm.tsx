@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import {
   ComboField,
+  EmailField,
+  PhoneField,
   SelectField,
   TextAreaField,
   TextField,
 } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
-import { INDIA_PHONE_PLACEHOLDER } from "@/lib/domain/phone";
 import { RELATIONSHIP_SUGGESTIONS } from "@/lib/domain/suggestions";
 import { createPatientSchema } from "@/schemas/patient.schema";
 
@@ -268,30 +269,21 @@ export function PatientFormModal({
             autoComplete="off"
             required
           />
-          <TextField
+          <PhoneField
             label="Phone"
-            type="tel"
             value={form.phone}
-            onChange={(event) => update("phone", event.target.value)}
+            onChange={(val) => update("phone", val)}
             onBlur={() => markTouched("phone")}
             error={errorFor("phone")}
-            placeholder={INDIA_PHONE_PLACEHOLDER}
-            inputMode="tel"
-            maxLength={30}
-            autoComplete="off"
-            hint="Indian mobile number."
             required
           />
-          <TextField
+          <EmailField
             label="Email"
-            type="email"
             value={form.email}
             onChange={(event) => update("email", event.target.value)}
             onBlur={() => markTouched("email")}
             error={errorFor("email")}
-            maxLength={254}
-            autoComplete="off"
-            hint="Optional."
+            required
           />
           <TextField
             label="Date of birth"
@@ -327,7 +319,7 @@ export function PatientFormModal({
           <legend className="px-1 text-sm font-medium text-ink-800">
             Emergency contact
           </legend>
-          <div className="mt-1 grid gap-3 sm:grid-cols-3">
+          <div className="mt-1 grid gap-3 sm:grid-cols-2">
             <TextField
               label="Name"
               value={form.emergencyName}
@@ -351,17 +343,15 @@ export function PatientFormModal({
               placeholder="e.g. Spouse"
               maxLength={80}
             />
-            <TextField
-              label="Phone"
-              type="tel"
-              value={form.emergencyPhone}
-              onChange={(event) => update("emergencyPhone", event.target.value)}
-              onBlur={() => markTouched("emergencyPhone")}
-              error={errorFor("emergencyPhone")}
-              placeholder={INDIA_PHONE_PLACEHOLDER}
-              inputMode="tel"
-              maxLength={30}
-            />
+            <div className="sm:col-span-2">
+              <PhoneField
+                label="Phone"
+                value={form.emergencyPhone}
+                onChange={(val) => update("emergencyPhone", val)}
+                onBlur={() => markTouched("emergencyPhone")}
+                error={errorFor("emergencyPhone")}
+              />
+            </div>
           </div>
         </fieldset>
 
