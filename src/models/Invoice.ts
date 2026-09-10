@@ -22,10 +22,34 @@ import { INVOICE_STATUSES, DISCOUNT_TYPES } from "@/lib/domain/enums";
  */
 const InvoiceItemSchema = new Schema(
   {
+    /**
+     * What kind of charge this line is, so a stored invoice can still be
+     * totalled field-wise — doctor fees apart from treatment fees — long after
+     * the description text has been edited.
+     *
+     * Derived from which reference the line carries, but STORED, because that
+     * is not recoverable afterwards: a consultation line and an ad-hoc line
+     * both have a null `treatmentId`, and telling them apart by reading the
+     * description would be guesswork.
+     */
+    kind: {
+      type: String,
+      required: true,
+      enum: ["treatment", "consultation", "adhoc"],
+      default: "adhoc",
+    },
+
     /** Nullable so an ad-hoc line can be billed without a catalogue entry. */
     treatmentId: {
       type: Schema.Types.ObjectId,
       ref: "Treatment",
+      default: null,
+    },
+
+    /** Set on a consultation line — which doctor's fee this is. */
+    doctorId: {
+      type: Schema.Types.ObjectId,
+      ref: "Doctor",
       default: null,
     },
 

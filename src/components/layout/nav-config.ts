@@ -30,8 +30,8 @@ export type NavIcon =
   | "doctors"
   | "departments"
   | "treatments"
-  | "forms"
   | "visits"
+  | "pharmacy"
   | "billing"
   | "reports"
   | "users"
@@ -75,10 +75,10 @@ export const HOSPITAL_NAV: readonly NavItem[] = [
     group: "Clinical",
   },
   {
-    label: "Forms",
-    href: "/forms",
-    icon: "forms",
-    permissions: ["form.view"],
+    label: "Pharmacy",
+    href: "/pharmacy",
+    icon: "pharmacy",
+    permissions: ["prescription.view"],
     available: true,
     group: "Clinical",
   },

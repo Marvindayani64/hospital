@@ -24,11 +24,6 @@ export const createVisitSchema = z
     notes: z.string().trim().max(8000).optional().default(""),
     recommendations: z.string().trim().max(4000).optional().default(""),
     followUpDate: followUpBase.optional().default(""),
-    /**
-     * Form responses captured during this encounter. This is the route by
-     * which specialty-specific data joins a visit (Section 26).
-     */
-    formResponseIds: z.array(objectIdSchema).max(50).optional().default([]),
   })
   .refine(
     (data) =>
@@ -52,7 +47,6 @@ export const updateVisitSchema = z
     notes: z.string().trim().max(8000).optional(),
     recommendations: z.string().trim().max(4000).optional(),
     followUpDate: followUpBase.optional(),
-    formResponseIds: z.array(objectIdSchema).max(50).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "Provide at least one field to update.",

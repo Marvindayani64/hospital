@@ -15,7 +15,7 @@ const RoleSchema = new Schema(
     description: { type: String, default: "" },
 
     /**
-     * Stable machine key for the five seeded roles, so code can find "the
+     * Stable machine key for the seeded roles, so code can find "the
      * hospital admin role of this hospital" without matching on a display name
      * the admin is free to rename. `null` for custom roles.
      */

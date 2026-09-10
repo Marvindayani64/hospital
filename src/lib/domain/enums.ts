@@ -2,8 +2,8 @@
  * Domain enumerations shared between the server and the browser.
  *
  * These live here rather than in the Mongoose models because client components
- * need them too — a form builder must list the field types, a payment dialog
- * must list the methods. Importing them from `@/models/*` pulled the whole
+ * need them too — a payment dialog must list the methods, an appointments board
+ * must list the statuses. Importing them from `@/models/*` pulled the whole
  * model file, and therefore Mongoose itself, into the client bundle.
  *
  * This module has NO imports. The models import these and attach them to their
@@ -11,53 +11,18 @@
  */
 
 // ---------------------------------------------------------------------------
-// Form fields
-// ---------------------------------------------------------------------------
-
-export const FIELD_TYPES = [
-  "text",
-  "textarea",
-  "number",
-  "email",
-  "phone",
-  "date",
-  "select",
-  "multi_select",
-  "radio",
-  "checkbox",
-  "boolean",
-  "file",
-  "image",
-] as const;
-
-export type FieldType = (typeof FIELD_TYPES)[number];
-
-/** Types that draw their value from a fixed option list. */
-export const CHOICE_TYPES: readonly FieldType[] = [
-  "select",
-  "multi_select",
-  "radio",
-  "checkbox",
-] as const;
-
-/** Types whose answer is an array rather than a scalar. */
-export const MULTI_VALUE_TYPES: readonly FieldType[] = [
-  "multi_select",
-  "checkbox",
-] as const;
-
-export const FORM_STATUSES = ["draft", "published", "archived"] as const;
-export type FormStatus = (typeof FORM_STATUSES)[number];
-
-// ---------------------------------------------------------------------------
 // Appointments
 // ---------------------------------------------------------------------------
 
+/**
+ * The front desk works one progression: confirmed → checked in → completed.
+ * `scheduled` is the state a booking starts in, and cancelled/no-show are the
+ * two ways it ends without being delivered.
+ */
 export const APPOINTMENT_STATUSES = [
   "scheduled",
   "confirmed",
   "checked_in",
-  "in_progress",
   "completed",
   "cancelled",
   "no_show",
@@ -76,6 +41,31 @@ export const TERMINAL_STATUSES: readonly AppointmentStatus[] = [
   "completed",
   "cancelled",
   "no_show",
+] as const;
+
+// ---------------------------------------------------------------------------
+// Prescriptions
+// ---------------------------------------------------------------------------
+
+/**
+ * A prescription is written once and then acted on by the pharmacy: it is
+ * either handed over (`dispensed`) or withdrawn (`cancelled`). Both are
+ * terminal — a dispensed prescription must not silently return to the queue,
+ * because the drugs have already left the counter. Correcting one means writing
+ * a new prescription, exactly as with appointments.
+ */
+export const PRESCRIPTION_STATUSES = [
+  "pending",
+  "dispensed",
+  "cancelled",
+] as const;
+
+export type PrescriptionStatus = (typeof PRESCRIPTION_STATUSES)[number];
+
+/** Statuses the pharmacy can no longer act on. */
+export const SETTLED_PRESCRIPTION_STATUSES: readonly PrescriptionStatus[] = [
+  "dispensed",
+  "cancelled",
 ] as const;
 
 // ---------------------------------------------------------------------------

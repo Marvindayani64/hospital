@@ -3,10 +3,10 @@ import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 /**
  * A clinical encounter (Section 26).
  *
- * Note what is NOT here: no specialty-specific fields. A dental clinic's tooth
- * chart and a hair clinic's density grading are captured through that
- * hospital's own FormResponses, linked to the visit — so supporting a new
- * specialty is configuration, never a schema change (Sections 26, 39).
+ * Deliberately generic: the free-text symptoms, diagnosis, notes and
+ * recommendations below are all a consultation records. There is no
+ * specialty-specific structure — a dental clinic's tooth chart or a hair
+ * clinic's density grading has to go in the notes.
  */
 const VisitSchema = new Schema(
   {

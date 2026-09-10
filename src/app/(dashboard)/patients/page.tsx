@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { hasPermission } from "@/lib/rbac/guard";
 import { guardHospitalPage } from "@/lib/rbac/page-guard";
 import { AccessDenied } from "@/components/layout/AccessDenied";
+import { todayDateString } from "@/utils/time";
 import { PatientsManager } from "@/app/(dashboard)/patients/PatientsManager";
 
 export const metadata: Metadata = { title: "Patients" };
@@ -30,6 +31,15 @@ export default async function PatientsPage() {
         canCreate={hasPermission(user, "patient.create")}
         canUpdate={hasPermission(user, "patient.update")}
         canDelete={hasPermission(user, "patient.delete")}
+        /**
+         * Writing a prescription records the consultation, so it takes both
+         * rights — the same pair the POST route enforces.
+         */
+        canPrescribe={
+          hasPermission(user, "prescription.create") &&
+          hasPermission(user, "visit.create")
+        }
+        today={todayDateString()}
       />
     </div>
   );

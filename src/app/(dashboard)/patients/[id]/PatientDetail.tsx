@@ -9,6 +9,14 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/States";
 import { PatientFormModal, type PatientRecord } from "@/components/ui/PatientForm";
 import { APPOINTMENT_STATUS_TONES, statusLabel } from "@/components/ui/appointment-status";
+import {
+  PRESCRIPTION_STATUS_LABELS,
+  PRESCRIPTION_STATUS_TONES,
+} from "@/components/ui/prescription-status";
+import {
+  PrescriptionFormModal,
+  type PrescriptionRecord,
+} from "@/components/ui/PrescriptionForm";
 import type { AppointmentSummary } from "@/services/appointment.service";
 import type { VisitSummary } from "@/services/visit.service";
 
@@ -34,19 +42,37 @@ export function PatientDetail({
   patient,
   appointments,
   visits,
+  prescriptions,
+  today,
+  prescriber,
+  prescribableAppointments,
   canViewAppointments,
   canViewVisits,
+  canViewPrescriptions,
+  canPrescribe,
   canUpdate,
 }: {
   patient: PatientRecord;
   appointments: AppointmentSummary[];
   visits: VisitSummary[];
+  prescriptions: PrescriptionRecord[];
+  today: string;
+  /**
+   * Who a prescription written now would be signed by — see
+   * getPrescriptionContext. Null only when nobody can sign it.
+   */
+  prescriber: { id: string; name: string } | null;
+  /** Today's live bookings, as encounter options for a new prescription. */
+  prescribableAppointments: Array<{ id: string; label: string }>;
   canViewAppointments: boolean;
   canViewVisits: boolean;
+  canViewPrescriptions: boolean;
+  canPrescribe: boolean;
   canUpdate: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [prescribing, setPrescribing] = useState(false);
 
   const upcoming = appointments.filter(
     (appointment) =>
@@ -80,7 +106,14 @@ export function PatientDetail({
             <Button variant="secondary">Back to patients</Button>
           </Link>
           {canUpdate ? (
-            <Button onClick={() => setEditing(true)}>Edit patient</Button>
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Edit patient
+            </Button>
+          ) : null}
+          {canPrescribe ? (
+            <Button onClick={() => setPrescribing(true)}>
+              Write prescription
+            </Button>
           ) : null}
         </div>
       </div>
@@ -231,13 +264,6 @@ export function PatientDetail({
                           {visit.diagnosis}
                         </p>
                       ) : null}
-                      {visit.formResponses.length > 0 ? (
-                        <p className="mt-1 text-xs text-gold-700">
-                          {visit.formResponses
-                            .map((response) => response.formName)
-                            .join(", ")}
-                        </p>
-                      ) : null}
                     </div>
                     {visit.followUpDate ? (
                       <Badge tone="neutral">
@@ -252,6 +278,106 @@ export function PatientDetail({
             </ul>
           )}
         </Card>
+      ) : null}
+
+      {canViewPrescriptions ? (
+        <Card>
+          <CardHeader
+            title="Prescriptions"
+            description={
+              prescriptions.length === 0
+                ? "Nothing prescribed yet"
+                : `${prescriptions.filter((p) => p.status === "pending").length} awaiting pharmacy · ${prescriptions.length} total`
+            }
+          />
+          {prescriptions.length === 0 ? (
+            <EmptyState
+              title="No prescriptions"
+              description="Prescriptions written for this patient will appear here."
+              action={
+                canPrescribe ? (
+                  <Button size="sm" onClick={() => setPrescribing(true)}>
+                    Write prescription
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-ink-100">
+              {prescriptions.map((prescription) => (
+                <li key={prescription.id} className="px-5 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium tabular-nums text-ink-900">
+                        {prescription.prescribedDate}
+                        <span className="ml-2 font-normal text-ink-500">
+                          {prescription.doctor?.name ?? "Unknown prescriber"}
+                        </span>
+                      </p>
+                      <ul className="mt-1.5 flex flex-col gap-1">
+                        {prescription.items.map((item, index) => (
+                          <li key={index} className="text-sm text-ink-700">
+                            <span className="text-ink-900">{item.drugName}</span>
+                            {[item.dosage, item.frequency, item.duration]
+                              .filter(Boolean)
+                              .map((part) => ` · ${part}`)
+                              .join("")}
+                            {item.instructions ? (
+                              <span className="text-ink-500">
+                                {" "}
+                                ({item.instructions})
+                              </span>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                      {prescription.notes ? (
+                        <p className="mt-1.5 text-xs text-ink-500">
+                          Note to pharmacy: {prescription.notes}
+                        </p>
+                      ) : null}
+                      {prescription.status === "dispensed" &&
+                      prescription.dispensedBy ? (
+                        <p className="mt-1.5 text-xs text-ink-500">
+                          Dispensed by {prescription.dispensedBy.name}
+                          {prescription.dispensedAt
+                            ? ` on ${new Date(prescription.dispensedAt).toLocaleDateString()}`
+                            : ""}
+                        </p>
+                      ) : null}
+                    </div>
+                    <Badge tone={PRESCRIPTION_STATUS_TONES[prescription.status]}>
+                      <span className="normal-case">
+                        {PRESCRIPTION_STATUS_LABELS[prescription.status]}
+                      </span>
+                    </Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      ) : null}
+
+      {prescribing ? (
+        <PrescriptionFormModal
+          patient={{
+            id: patient.id,
+            name: patient.fullName,
+            patientNumber: patient.patientNumber,
+          }}
+          prescriber={prescriber}
+          appointments={prescribableAppointments}
+          defaultAppointmentId={prescribableAppointments[0]?.id ?? ""}
+          defaultDate={today}
+          onClose={() => setPrescribing(false)}
+          onSaved={() => {
+            setPrescribing(false);
+            // Re-render the server component so the new prescription — and the
+            // visit it recorded — both appear.
+            router.refresh();
+          }}
+        />
       ) : null}
 
       {editing ? (

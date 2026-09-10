@@ -191,15 +191,22 @@ async function main(): Promise<void> {
   section("Default roles (Section 48)");
   const alphaRoles = await call("/api/roles?pageSize=100", { jar: alpha.adminJar });
   check(
-    "Five system roles seeded per hospital",
-    alphaRoles.json?.data?.items?.length === 5,
+    "Six system roles seeded per hospital",
+    alphaRoles.json?.data?.items?.length === 6,
     `got ${alphaRoles.json?.data?.items?.length}`,
   );
   const roleNames = (alphaRoles.json.data.items as any[]).map((r) => r.name).sort();
   check(
     "Expected role names present",
     JSON.stringify(roleNames) ===
-      JSON.stringify(["Accountant", "Doctor", "Hospital Admin", "Nurse", "Receptionist"]),
+      JSON.stringify([
+        "Accountant",
+        "Doctor",
+        "Hospital Admin",
+        "Nurse",
+        "Pharmacist",
+        "Receptionist",
+      ]),
     roleNames.join(", "),
   );
   check(
@@ -242,8 +249,8 @@ async function main(): Promise<void> {
     method: "POST",
     body: {
       name: `Lab Technician ${stamp}`,
-      description: "Reads patients, submits forms.",
-      permissions: ["patient.view", "form.view", "form.submit"],
+      description: "Reads patients and their consultation records.",
+      permissions: ["patient.view", "visit.view", "treatment.view"],
     },
     jar: alpha.adminJar,
   });
@@ -252,7 +259,7 @@ async function main(): Promise<void> {
   check(
     "Created role stores exactly the chosen permissions",
     JSON.stringify([...customRole.json.data.permissions].sort()) ===
-      JSON.stringify(["form.submit", "form.view", "patient.view"]),
+      JSON.stringify(["patient.view", "treatment.view", "visit.view"]),
   );
 
   const invalidPerm = await call("/api/roles", {
@@ -305,7 +312,7 @@ async function main(): Promise<void> {
   check(
     "Member's effective permissions match their role",
     JSON.stringify([...memberMe.json.data.user.permissions].sort()) ===
-      JSON.stringify(["form.submit", "form.view", "patient.view"]),
+      JSON.stringify(["patient.view", "treatment.view", "visit.view"]),
     JSON.stringify(memberMe.json?.data?.user?.permissions),
   );
 
@@ -512,7 +519,7 @@ async function main(): Promise<void> {
   section("Role changes take effect immediately");
   const grant = await call(`/api/roles/${customRoleId}`, {
     method: "PATCH",
-    body: { permissions: ["patient.view", "form.view", "form.submit", "user.view"] },
+    body: { permissions: ["patient.view", "visit.view", "treatment.view", "user.view"] },
     jar: alpha.adminJar,
   });
   check("Role permissions updated", grant.status === 200, `got ${grant.status}`);

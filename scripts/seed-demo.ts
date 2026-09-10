@@ -4,7 +4,7 @@
  *   npm run dev          (in one terminal)
  *   npm run seed:demo    (in another)
  *
- * Creates a hospital with staff, patients, appointments, a form, visits and
+ * Creates a hospital with staff, patients, appointments, visits and
  * billing already in place, so every screen has something on it. All accounts
  * use known passwords and have their forced password change already completed.
  *
@@ -330,100 +330,6 @@ async function main() {
     });
   }
 
-  // ---- Form ----------------------------------------------------------------
-  console.log("Building a form…");
-
-  const form = await call("/api/forms", {
-    method: "POST",
-    body: {
-      name: "New Patient Intake",
-      description: "Completed by every new patient at their first visit.",
-      category: "intake",
-    },
-    jar,
-  });
-
-  await call(`/api/forms/${form.json.data.id}/fields`, {
-    method: "PUT",
-    body: {
-      fields: [
-        {
-          label: "Do you have any allergies?",
-          fieldName: "has_allergies",
-          type: "select",
-          required: true,
-          options: [
-            { label: "Yes", value: "yes" },
-            { label: "No", value: "no" },
-          ],
-          validation: {},
-          placeholder: "",
-          helpText: "",
-          defaultValue: null,
-          conditionalLogic: null,
-        },
-        {
-          label: "Please list them",
-          fieldName: "allergy_details",
-          type: "textarea",
-          required: true,
-          options: [],
-          validation: { maxLength: 500 },
-          placeholder: "e.g. penicillin",
-          helpText: "Only shown when you answer Yes above.",
-          defaultValue: null,
-          // Demonstrates conditional logic on the live form.
-          conditionalLogic: { fieldName: "has_allergies", operator: "equals", value: "yes" },
-        },
-        {
-          label: "Current medications",
-          fieldName: "medications",
-          type: "textarea",
-          required: false,
-          options: [],
-          validation: {},
-          placeholder: "",
-          helpText: "",
-          defaultValue: null,
-          conditionalLogic: null,
-        },
-        {
-          label: "Smoker?",
-          fieldName: "smoker",
-          type: "boolean",
-          required: false,
-          options: [],
-          validation: {},
-          placeholder: "",
-          helpText: "",
-          defaultValue: null,
-          conditionalLogic: null,
-        },
-      ],
-    },
-    jar,
-  });
-
-  await call(`/api/forms/${form.json.data.id}`, {
-    method: "PATCH",
-    body: { status: "published" },
-    jar,
-  });
-
-  const response = await call(`/api/forms/${form.json.data.id}/responses`, {
-    method: "POST",
-    body: {
-      patientId: patients[0],
-      responses: {
-        has_allergies: "yes",
-        allergy_details: "Penicillin — causes a rash.",
-        medications: "None",
-        smoker: false,
-      },
-    },
-    jar,
-  });
-
   // ---- Visits --------------------------------------------------------------
   console.log("Recording visits…");
 
@@ -440,7 +346,6 @@ async function main() {
       recommendations: "Hydration, regular breaks from screens, review in one month.",
       notes: "No neurological red flags on examination.",
       followUpDate: dateOffset(30),
-      formResponseIds: response.status === 201 ? [response.json.data.id] : [],
     },
     jar,
   });
@@ -569,11 +474,10 @@ async function main() {
   console.log("  2. Sign in as the Receptionist instead: no Billing, Visits,");
   console.log("     Staff or Settings in the sidebar, and the dashboard has");
   console.log("     no revenue tile (the figure is never even calculated).");
-  console.log("  3. Forms → New Patient Intake → Responses → Fill in form.");
-  console.log("     Answer 'Yes' to allergies and a follow-up question appears.");
-  console.log("  4. Forms → New Patient Intake → Build → change a field and");
-  console.log("     save: it warns that a new version will be created, and the");
-  console.log("     existing response stays on version 1.");
+  console.log("  3. Patients → any patient → Write prescription. The");
+  console.log("     consultation is recorded for you, and it lands in Pharmacy.");
+  console.log("  4. Pharmacy → dispense it. A dispensed prescription cannot be");
+  console.log("     dispensed twice, and leaves the pending queue.");
   console.log("  5. Billing → the draft invoice → Edit. Prices come from the");
   console.log("     treatment catalogue; you cannot type one in.");
   console.log("  6. Appointments → book Dr. Alice Morgan at a time she is");

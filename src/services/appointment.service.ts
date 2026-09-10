@@ -54,14 +54,13 @@ type Actor = { userId: string; hospitalId: string };
  * Legal status transitions (Section 21).
  *
  * Modelling this explicitly stops nonsense sequences — a completed appointment
- * cannot be moved back to scheduled, and a cancelled one cannot be marked
- * in progress. Rescheduling a cancelled appointment means creating a new one.
+ * cannot be moved back to scheduled, and a cancelled one cannot be checked in.
+ * Rescheduling a cancelled appointment means creating a new one.
  */
 const ALLOWED_TRANSITIONS: Record<AppointmentStatus, readonly AppointmentStatus[]> = {
   scheduled: ["confirmed", "checked_in", "cancelled", "no_show"],
   confirmed: ["checked_in", "cancelled", "no_show"],
-  checked_in: ["in_progress", "completed", "cancelled", "no_show"],
-  in_progress: ["completed", "cancelled"],
+  checked_in: ["completed", "cancelled", "no_show"],
   completed: [],
   cancelled: [],
   no_show: [],

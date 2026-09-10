@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/Modal";
 import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/States";
 import { useToast } from "@/components/ui/Toast";
 import { PatientFormModal, type PatientRecord } from "@/components/ui/PatientForm";
+import { PrescriptionLauncher } from "@/components/ui/PrescriptionForm";
 import { ApiClientError, api } from "@/lib/client/api";
 import { useInitialSearch } from "@/lib/client/use-initial-search";
 import type { Paginated } from "@/types";
@@ -25,10 +26,14 @@ export function PatientsManager({
   canCreate,
   canUpdate,
   canDelete,
+  canPrescribe,
+  today,
 }: {
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
+  canPrescribe: boolean;
+  today: string;
 }) {
   const toast = useToast();
 
@@ -46,6 +51,7 @@ export function PatientsManager({
   const [editing, setEditing] = useState<PatientRecord | "new" | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PatientRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [prescribing, setPrescribing] = useState<PatientRecord | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -205,7 +211,15 @@ export function PatientsManager({
                       {patient.age ?? "—"}
                     </td>
                     <td className="px-5 py-3">
-                      <div className="flex justify-end gap-1.5">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {canPrescribe ? (
+                          <Button
+                            size="sm"
+                            onClick={() => setPrescribing(patient)}
+                          >
+                            Write prescription
+                          </Button>
+                        ) : null}
                         <Link href={`/patients/${patient.id}`}>
                           <Button size="sm" variant="secondary">
                             View
@@ -265,6 +279,19 @@ export function PatientsManager({
           </CardBody>
         ) : null}
       </Card>
+
+      {prescribing ? (
+        <PrescriptionLauncher
+          patient={{
+            id: prescribing.id,
+            name: prescribing.fullName,
+            patientNumber: prescribing.patientNumber,
+          }}
+          today={today}
+          onClose={() => setPrescribing(null)}
+          onSaved={() => setPrescribing(null)}
+        />
+      ) : null}
 
       {editing ? (
         <PatientFormModal

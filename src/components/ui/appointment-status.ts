@@ -10,8 +10,7 @@ export const APPOINTMENT_STATUS_TONES: Record<
 > = {
   scheduled: "neutral",
   confirmed: "gold",
-  checked_in: "gold",
-  in_progress: "warning",
+  checked_in: "warning",
   completed: "success",
   cancelled: "danger",
   no_show: "danger",
@@ -25,8 +24,7 @@ export function statusLabel(status: string): string {
 export const NEXT_STATUSES: Record<AppointmentStatus, AppointmentStatus[]> = {
   scheduled: ["confirmed", "checked_in", "cancelled", "no_show"],
   confirmed: ["checked_in", "cancelled", "no_show"],
-  checked_in: ["in_progress", "completed", "cancelled", "no_show"],
-  in_progress: ["completed", "cancelled"],
+  checked_in: ["completed", "cancelled", "no_show"],
   completed: [],
   cancelled: [],
   no_show: [],

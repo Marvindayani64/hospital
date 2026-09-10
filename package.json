@@ -16,9 +16,9 @@
     "verify:tenancy": "tsx scripts/verify-tenancy.ts",
     "verify:catalog": "tsx scripts/verify-catalog.ts",
     "verify:clinical": "tsx scripts/verify-clinical.ts",
-    "verify:forms": "tsx scripts/verify-forms.ts",
     "verify:visits": "tsx scripts/verify-visits.ts",
     "verify:billing": "tsx scripts/verify-billing.ts",
+    "verify:pharmacy": "tsx scripts/verify-pharmacy.ts",
     "verify:admin": "tsx scripts/verify-admin.ts"
   },
   "dependencies": {

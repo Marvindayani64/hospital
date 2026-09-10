@@ -1,13 +1,6 @@
 import mongoose from "mongoose";
 import { connectToDatabase } from "@/lib/db/connect";
-import {
-  Appointment,
-  Doctor,
-  FormResponse,
-  Patient,
-  Treatment,
-  Visit,
-} from "@/models";
+import { Appointment, Doctor, Patient, Treatment, Visit } from "@/models";
 import { ApiError, isDuplicateKeyError } from "@/lib/api/errors";
 import { recordAudit } from "@/services/audit.service";
 import {
@@ -21,14 +14,6 @@ import type { CreateVisitInput, UpdateVisitInput } from "@/schemas/visit.schema"
 import type { Paginated } from "@/types";
 import type { RequestMeta } from "@/utils/request";
 
-export type AttachedResponse = {
-  id: string;
-  formId: string;
-  formName: string;
-  formVersion: number;
-  submittedAt: string;
-};
-
 export type VisitSummary = {
   id: string;
   patient: { id: string; name: string; patientNumber: string } | null;
@@ -41,8 +26,6 @@ export type VisitSummary = {
   notes: string;
   recommendations: string;
   followUpDate: string | null;
-  /** Specialty data captured during this encounter (Section 26). */
-  formResponses: AttachedResponse[];
   createdAt: string;
   updatedAt: string;
 };
@@ -55,24 +38,21 @@ function ref<T extends Record<string, unknown>>(value: unknown): T | null {
     : null;
 }
 
-function toSummary(
-  visit: {
-    _id: unknown;
-    patientId: unknown;
-    doctorId: unknown;
-    appointmentId?: unknown;
-    treatmentId?: unknown;
-    visitDate: string;
-    symptoms?: string | null;
-    diagnosis?: string | null;
-    notes?: string | null;
-    recommendations?: string | null;
-    followUpDate?: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-  },
-  formResponses: AttachedResponse[],
-): VisitSummary {
+function toSummary(visit: {
+  _id: unknown;
+  patientId: unknown;
+  doctorId: unknown;
+  appointmentId?: unknown;
+  treatmentId?: unknown;
+  visitDate: string;
+  symptoms?: string | null;
+  diagnosis?: string | null;
+  notes?: string | null;
+  recommendations?: string | null;
+  followUpDate?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): VisitSummary {
   const patient = ref<{
     _id: unknown;
     firstName: string;
@@ -105,7 +85,6 @@ function toSummary(
     notes: visit.notes ?? "",
     recommendations: visit.recommendations ?? "",
     followUpDate: visit.followUpDate ?? null,
-    formResponses,
     createdAt: visit.createdAt.toISOString(),
     updatedAt: visit.updatedAt.toISOString(),
   };
@@ -116,41 +95,6 @@ const POPULATE = [
   { path: "doctorId", select: "displayName" },
   { path: "treatmentId", select: "name" },
 ] as const;
-
-/** Loads the responses linked to a set of visits, in one query. */
-async function loadAttachedResponses(
-  visitIds: readonly unknown[],
-  hospitalId: string,
-): Promise<Map<string, AttachedResponse[]>> {
-  if (visitIds.length === 0) return new Map();
-
-  const responses = await FormResponse.find(
-    tenantScoped(hospitalId, {
-      visitId: mongoose.trusted({ $in: [...visitIds] }),
-    }),
-  )
-    .select("visitId formId formVersion submittedAt")
-    .populate<{ formId: { _id: unknown; name: string } | null }>("formId", "name")
-    .sort({ submittedAt: -1 })
-    .lean();
-
-  const byVisit = new Map<string, AttachedResponse[]>();
-
-  for (const response of responses) {
-    const key = String(response.visitId);
-    const bucket = byVisit.get(key) ?? [];
-    bucket.push({
-      id: String(response._id),
-      formId: String(response.formId?._id ?? ""),
-      formName: response.formId?.name ?? "Form",
-      formVersion: response.formVersion,
-      submittedAt: response.submittedAt.toISOString(),
-    });
-    byVisit.set(key, bucket);
-  }
-
-  return byVisit;
-}
 
 // ---------------------------------------------------------------------------
 // Relationship validation (Section 10)
@@ -220,69 +164,6 @@ async function resolveReferences(
   };
 }
 
-/**
- * Links form responses to a visit, and unlinks any that were removed.
- *
- * Each response must belong to the same tenant AND the same patient — a form
- * filled in for one patient must never end up on another's clinical record.
- */
-async function syncAttachedResponses(
-  visitId: string,
-  patientId: string,
-  responseIds: readonly string[],
-  hospitalId: string,
-): Promise<void> {
-  for (const responseId of responseIds) {
-    const response = await assertBelongsToTenant(
-      FormResponse,
-      responseId,
-      hospitalId,
-      "Form response",
-    );
-
-    if (String(response.patientId) !== patientId) {
-      throw ApiError.validation(
-        "A selected form response belongs to a different patient.",
-        {
-          fields: {
-            formResponseIds: "One response is for another patient.",
-          },
-        },
-      );
-    }
-
-    // Already on another visit — moving it would silently strip it from that
-    // record, so refuse rather than reassign.
-    if (response.visitId && String(response.visitId) !== visitId) {
-      throw ApiError.conflict(
-        "One of those form responses is already attached to another visit.",
-      );
-    }
-  }
-
-  // Detach anything previously linked that is no longer selected.
-  await FormResponse.updateMany(
-    tenantScoped(hospitalId, {
-      visitId,
-      ...(responseIds.length > 0
-        ? { _id: mongoose.trusted({ $nin: responseIds.map((id) => new mongoose.Types.ObjectId(id)) }) }
-        : {}),
-    }),
-    { $set: { visitId: null } },
-  );
-
-  if (responseIds.length > 0) {
-    await FormResponse.updateMany(
-      tenantScoped(hospitalId, {
-        _id: mongoose.trusted({
-          $in: responseIds.map((id) => new mongoose.Types.ObjectId(id)),
-        }),
-      }),
-      { $set: { visitId } },
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -340,15 +221,8 @@ export async function listVisits(
     Visit.countDocuments(filter),
   ]);
 
-  const attached = await loadAttachedResponses(
-    visits.map((visit) => visit._id),
-    hospitalId,
-  );
-
   return {
-    items: visits.map((visit) =>
-      toSummary(visit as never, attached.get(String(visit._id)) ?? []),
-    ),
+    items: visits.map((visit) => toSummary(visit as never)),
     ...paginationMeta(params, total),
   };
 }
@@ -367,9 +241,7 @@ export async function getVisit(
 
   if (!visit) throw ApiError.notFound("Visit not found.");
 
-  const attached = await loadAttachedResponses([visit._id], hospitalId);
-
-  return toSummary(visit as never, attached.get(String(visit._id)) ?? []);
+  return toSummary(visit as never);
 }
 
 // ---------------------------------------------------------------------------
@@ -408,15 +280,6 @@ export async function createVisit(
       );
     }
     throw error;
-  }
-
-  if (input.formResponseIds.length > 0) {
-    await syncAttachedResponses(
-      String(visit._id),
-      refs.patientId,
-      input.formResponseIds,
-      actor.hospitalId,
-    );
   }
 
   await recordAudit({
@@ -501,15 +364,6 @@ export async function updateVisit(
 
   await visit.save();
 
-  if (input.formResponseIds !== undefined) {
-    await syncAttachedResponses(
-      visitId,
-      String(visit.patientId),
-      input.formResponseIds,
-      actor.hospitalId,
-    );
-  }
-
   await recordAudit({
     hospitalId: actor.hospitalId,
     userId: actor.userId,
@@ -522,41 +376,4 @@ export async function updateVisit(
   });
 
   return getVisit(visitId, actor.hospitalId);
-}
-
-/**
- * Form responses for a patient that are available to attach to a visit —
- * i.e. not already linked to a different one.
- */
-export async function listAttachableResponses(
-  patientId: string,
-  hospitalId: string,
-  visitId?: string,
-): Promise<AttachedResponse[]> {
-  await connectToDatabase();
-
-  await assertBelongsToTenant(Patient, patientId, hospitalId, "Patient");
-
-  const responses = await FormResponse.find(
-    tenantScoped(hospitalId, {
-      patientId,
-      $or: [
-        { visitId: null },
-        ...(visitId ? [{ visitId }] : []),
-      ],
-    }),
-  )
-    .select("formId formVersion submittedAt")
-    .populate<{ formId: { _id: unknown; name: string } | null }>("formId", "name")
-    .sort({ submittedAt: -1 })
-    .limit(100)
-    .lean();
-
-  return responses.map((response) => ({
-    id: String(response._id),
-    formId: String(response.formId?._id ?? ""),
-    formName: response.formId?.name ?? "Form",
-    formVersion: response.formVersion,
-    submittedAt: response.submittedAt.toISOString(),
-  }));
 }

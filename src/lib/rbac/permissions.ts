@@ -40,17 +40,25 @@ export const PERMISSIONS = [
   "department.update",
   "department.delete",
 
-  // Forms
-  "form.create",
-  "form.view",
-  "form.update",
-  "form.delete",
-  "form.submit",
-
   // Visits
   "visit.create",
   "visit.view",
   "visit.update",
+
+  /**
+   * Prescriptions.
+   *
+   * `prescription.dispense` is the pharmacy's authority over the queue: it
+   * covers both handing a prescription over and withdrawing one. The two are
+   * the same act of judgement at the counter, and splitting them would leave a
+   * pharmacist able to dispense but not to refuse.
+   *
+   * Writing a prescription implies `visit.create`, because doing so records the
+   * consultation — see prescription.service.ts.
+   */
+  "prescription.create",
+  "prescription.view",
+  "prescription.dispense",
 
   // Billing
   "invoice.create",
@@ -116,8 +124,8 @@ export function groupPermissions(): PermissionGroup[] {
     doctor: "Doctors",
     treatment: "Treatments",
     department: "Departments",
-    form: "Forms",
     visit: "Visits",
+    prescription: "Prescriptions",
     invoice: "Invoices",
     payment: "Payments",
     user: "Users",

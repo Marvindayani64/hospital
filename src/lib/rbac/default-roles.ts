@@ -11,6 +11,7 @@ export const SYSTEM_ROLE_KEYS = [
   "receptionist",
   "nurse",
   "accountant",
+  "pharmacist",
 ] as const;
 
 export type SystemRoleKey = (typeof SYSTEM_ROLE_KEYS)[number];
@@ -36,18 +37,18 @@ export const DEFAULT_ROLE_TEMPLATES: readonly DefaultRoleTemplate[] = [
   {
     key: "doctor",
     name: "Doctor",
-    description: "Clinical access: patients, appointments, visits and forms.",
+    description: "Clinical access: patients, appointments and visits.",
     permissions: [
       "patient.view",
       "appointment.view",
       "appointment.update",
       "treatment.view",
       "department.view",
-      "form.view",
-      "form.submit",
       "visit.create",
       "visit.view",
       "visit.update",
+      "prescription.create",
+      "prescription.view",
     ],
   },
   {
@@ -70,16 +71,15 @@ export const DEFAULT_ROLE_TEMPLATES: readonly DefaultRoleTemplate[] = [
   {
     key: "nurse",
     name: "Nurse",
-    description: "Ward access: patient records, appointments and clinical forms.",
+    description: "Ward access: patient records and appointments.",
     permissions: [
       "patient.view",
       "patient.update",
       "appointment.view",
       "visit.view",
-      "form.view",
-      "form.submit",
       "treatment.view",
       "department.view",
+      "prescription.view",
     ],
   },
   {
@@ -93,6 +93,26 @@ export const DEFAULT_ROLE_TEMPLATES: readonly DefaultRoleTemplate[] = [
       "invoice.update",
       "payment.create",
       "payment.view",
+      "treatment.view",
+    ],
+  },
+  {
+    key: "pharmacist",
+    name: "Pharmacist",
+    description:
+      "Pharmacy access: the prescription queue, and dispensing against it.",
+    /**
+     * Deliberately NOT granted `visit.view`. The pharmacy needs to know what
+     * was prescribed and to whom, not to read the consultation notes behind it
+     * — so the queue carries the prescriber's note to the pharmacy, and the
+     * clinical record stays with clinical staff.
+     */
+    permissions: [
+      "patient.view",
+      "prescription.view",
+      "prescription.dispense",
+      "doctor.view",
+      "department.view",
       "treatment.view",
     ],
   },

@@ -17,10 +17,12 @@ export {
   type AppointmentDoc,
   type AppointmentStatus,
 } from "@/models/Appointment";
-export { Form, type FormDoc, type FormStatus } from "@/models/Form";
-export { FormField, type FormFieldDoc, type FieldType } from "@/models/FormField";
-export { FormResponse, type FormResponseDoc } from "@/models/FormResponse";
 export { Visit, type VisitDoc } from "@/models/Visit";
+export {
+  Prescription,
+  type PrescriptionDoc,
+  type PrescriptionStatus,
+} from "@/models/Prescription";
 export {
   Invoice,
   type InvoiceDoc,
