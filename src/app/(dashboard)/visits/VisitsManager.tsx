@@ -271,12 +271,6 @@ export function VisitsManager({
                           </span>
                         )}
                       </p>
-                      {visit.formResponses.length > 0 ? (
-                        <p className="mt-0.5 text-xs text-gold-700">
-                          {visit.formResponses.length} attached{" "}
-                          {visit.formResponses.length === 1 ? "form" : "forms"}
-                        </p>
-                      ) : null}
                     </td>
                     <td className="px-5 py-3">
                       {visit.followUpDate ? (
@@ -395,28 +389,6 @@ export function VisitsManager({
                 <p className="mt-0.5 text-sm tabular-nums text-ink-900">
                   {viewing.followUpDate}
                 </p>
-              </div>
-            ) : null}
-
-            {viewing.formResponses.length > 0 ? (
-              <div>
-                <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-ink-500">
-                  Attached forms
-                </p>
-                <ul className="flex flex-col gap-1.5">
-                  {viewing.formResponses.map((response) => (
-                    <li
-                      key={response.id}
-                      className="flex items-center justify-between rounded-lg border border-ink-200 px-3 py-2 text-sm"
-                    >
-                      <span className="text-ink-900">{response.formName}</span>
-                      <span className="text-xs text-ink-500">
-                        v{response.formVersion} ·{" "}
-                        {new Date(response.submittedAt).toLocaleDateString()}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
               </div>
             ) : null}
           </div>

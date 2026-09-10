@@ -13,8 +13,8 @@ Run the **one suite that covers what you touched**, not all eight:
 | `verify:tenancy` | users, roles, permissions, cross-tenant isolation |
 | `verify:catalog` | departments, treatments, pricing, currency |
 | `verify:clinical` | patients, doctors, appointments |
-| `verify:forms` | form builder, responses, versioning |
 | `verify:visits` | visits, consultations |
+| `verify:pharmacy` | prescriptions, dispensing, the auto-recorded visit |
 | `verify:billing` | invoices, payments |
 | `verify:admin` | dashboard, insights, header search, settings, audit log, reports |
 

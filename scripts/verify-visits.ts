@@ -7,9 +7,8 @@
 /**
  * Phase 6 verification — visits and consultations.
  *
- * Covers Section 26 (clinical records, extensible across specialties via form
- * attachment), cross-tenant relationship validation, and the referential guards
- * that visits add to earlier modules.
+ * Covers Section 26 (clinical records), cross-tenant relationship validation,
+ * and the referential guards that visits add to earlier modules.
  *
  * Usage:
  *   1. npm run dev
@@ -127,10 +126,9 @@ type Tenant = {
   doctorId: string;
   departmentId: string;
   treatmentId: string;
-  formId: string;
 };
 
-/** A hospital configured end to end: department, treatment, doctor, form. */
+/** A hospital configured end to end: department, treatment, doctor, patient. */
 async function buildTenant(
   superJar: Jar,
   label: string,
@@ -194,48 +192,12 @@ async function buildTenant(
     jar,
   });
 
-  // A specialty form — this is how non-generic clinical data reaches a visit.
-  const form = await call("/api/forms", {
-    method: "POST",
-    body: { name: `${label} Assessment ${stamp}`, category: "assessment" },
-    jar,
-  });
-  await call(`/api/forms/${form.json.data.id}/fields`, {
-    method: "PUT",
-    body: {
-      fields: [
-        {
-          label: "Severity",
-          fieldName: "severity",
-          type: "select",
-          required: true,
-          options: [
-            { label: "Mild", value: "mild" },
-            { label: "Severe", value: "severe" },
-          ],
-          validation: {},
-          placeholder: "",
-          helpText: "",
-          defaultValue: null,
-          conditionalLogic: null,
-        },
-      ],
-    },
-    jar,
-  });
-  await call(`/api/forms/${form.json.data.id}`, {
-    method: "PATCH",
-    body: { status: "published" },
-    jar,
-  });
-
   return {
     jar,
     patientId: patient.json.data.id,
     doctorId: doctor.json.data.id,
     departmentId: department.json.data.id,
     treatmentId: treatment.json.data.id,
-    formId: form.json.data.id,
   };
 }
 
@@ -390,113 +352,6 @@ async function main(): Promise<void> {
   );
 
   // -------------------------------------------------------------------------
-  section("Specialty data via attached forms (Section 26)");
-  const response = await call(`/api/forms/${alpha.formId}/responses`, {
-    method: "POST",
-    body: {
-      patientId: alpha.patientId,
-      responses: { severity: "severe" },
-    },
-    jar: alpha.jar,
-  });
-  check("Specialty form submitted", response.status === 201, `got ${response.status}`);
-  const responseId = response.json.data.id as string;
-
-  const attachable = await call(
-    `/api/patients/${alpha.patientId}/attachable-responses`,
-    { jar: alpha.jar },
-  );
-  check(
-    "The unattached response is offered for attachment",
-    (attachable.json.data.responses as any[]).some((r) => r.id === responseId),
-  );
-
-  const attached = await call(`/api/visits/${walkInId}`, {
-    method: "PATCH",
-    body: { formResponseIds: [responseId] },
-    jar: alpha.jar,
-  });
-  check("Response attached to the visit", attached.status === 200, `got ${attached.status}`);
-  check(
-    "The visit now carries the specialty form",
-    attached.json.data.formResponses.length === 1 &&
-      attached.json.data.formResponses[0].id === responseId,
-    JSON.stringify(attached.json?.data?.formResponses),
-  );
-  check(
-    "The attached form reports the version it was answered on",
-    attached.json.data.formResponses[0].formVersion === 1,
-  );
-
-  const noLongerAttachable = await call(
-    `/api/patients/${alpha.patientId}/attachable-responses`,
-    { jar: alpha.jar },
-  );
-  check(
-    "An attached response is no longer offered to other visits",
-    !(noLongerAttachable.json.data.responses as any[]).some(
-      (r) => r.id === responseId,
-    ),
-  );
-
-  const stealAttempt = await call(`/api/visits/${appointmentVisitId}`, {
-    method: "PATCH",
-    body: { formResponseIds: [responseId] },
-    jar: alpha.jar,
-  });
-  check(
-    "A response already on one visit cannot be attached to another",
-    stealAttempt.status === 409,
-    `got ${stealAttempt.status}`,
-  );
-
-  const detached = await call(`/api/visits/${walkInId}`, {
-    method: "PATCH",
-    body: { formResponseIds: [] },
-    jar: alpha.jar,
-  });
-  check(
-    "Detaching clears the link",
-    detached.status === 200 && detached.json.data.formResponses.length === 0,
-    JSON.stringify(detached.json?.data?.formResponses),
-  );
-
-  const reattachable = await call(
-    `/api/patients/${alpha.patientId}/attachable-responses`,
-    { jar: alpha.jar },
-  );
-  check(
-    "A detached response becomes available again",
-    (reattachable.json.data.responses as any[]).some((r) => r.id === responseId),
-  );
-
-  // Re-attach for the remaining checks.
-  await call(`/api/visits/${walkInId}`, {
-    method: "PATCH",
-    body: { formResponseIds: [responseId] },
-    jar: alpha.jar,
-  });
-
-  const otherPatientResponse = await call(`/api/forms/${alpha.formId}/responses`, {
-    method: "POST",
-    body: {
-      patientId: otherPatient.json.data.id,
-      responses: { severity: "mild" },
-    },
-    jar: alpha.jar,
-  });
-  const wrongPatientAttach = await call(`/api/visits/${walkInId}`, {
-    method: "PATCH",
-    body: { formResponseIds: [otherPatientResponse.json.data.id] },
-    jar: alpha.jar,
-  });
-  check(
-    "A response for a different patient cannot be attached",
-    wrongPatientAttach.status === 422,
-    `got ${wrongPatientAttach.status}`,
-  );
-
-  // -------------------------------------------------------------------------
   section("Clinical records cannot be reassigned");
   const reassign = await call(`/api/visits/${walkInId}`, {
     method: "PATCH",
@@ -603,16 +458,6 @@ async function main(): Promise<void> {
     "A treatment from another hospital is rejected",
     crossTreatmentVisit.status === 404,
     `got ${crossTreatmentVisit.status}`,
-  );
-
-  const crossAttachable = await call(
-    `/api/patients/${alpha.patientId}/attachable-responses`,
-    { jar: beta.jar },
-  );
-  check(
-    "Hospital B cannot list a Hospital A patient's responses",
-    crossAttachable.status === 404,
-    `got ${crossAttachable.status}`,
   );
 
   const betaVisits = await call("/api/visits?pageSize=100", { jar: beta.jar });

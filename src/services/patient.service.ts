@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import { connectToDatabase } from "@/lib/db/connect";
-import { Appointment, FormResponse, Invoice, Patient, Visit } from "@/models";
+import { Appointment, Invoice, Patient, Prescription, Visit } from "@/models";
 import { ApiError, isDuplicateKeyError } from "@/lib/api/errors";
 import { recordAudit } from "@/services/audit.service";
 import { formatReference, nextSequence } from "@/services/counter.service";
@@ -286,12 +286,17 @@ export async function deletePatient(
     "Patient",
   );
 
-  const [appointmentCount, visitCount, responseCount, invoiceCount] =
+  const [appointmentCount, visitCount, invoiceCount, prescriptionCount] =
     await Promise.all([
       Appointment.countDocuments(tenantScoped(actor.hospitalId, { patientId })),
       Visit.countDocuments(tenantScoped(actor.hospitalId, { patientId })),
-      FormResponse.countDocuments(tenantScoped(actor.hospitalId, { patientId })),
       Invoice.countDocuments(tenantScoped(actor.hospitalId, { patientId })),
+      /**
+       * Every prescription has a visit, so the visit count above already blocks
+       * this case. Counted anyway so the message names what is actually on the
+       * record, and so the guard does not depend on that invariant holding.
+       */
+      Prescription.countDocuments(tenantScoped(actor.hospitalId, { patientId })),
     ]);
 
   const blockers: string[] = [];
@@ -303,14 +308,14 @@ export async function deletePatient(
   if (visitCount > 0) {
     blockers.push(`${visitCount} ${visitCount === 1 ? "visit" : "visits"}`);
   }
-  if (responseCount > 0) {
-    blockers.push(
-      `${responseCount} form ${responseCount === 1 ? "response" : "responses"}`,
-    );
-  }
   if (invoiceCount > 0) {
     blockers.push(
       `${invoiceCount} ${invoiceCount === 1 ? "invoice" : "invoices"}`,
+    );
+  }
+  if (prescriptionCount > 0) {
+    blockers.push(
+      `${prescriptionCount} ${prescriptionCount === 1 ? "prescription" : "prescriptions"}`,
     );
   }
 

@@ -39,9 +39,14 @@ import type { RequestMeta } from "@/utils/request";
 
 export type PaymentStatus = "unpaid" | "partially_paid" | "paid";
 
+/** What a billed line is, so totals can be broken out field-wise. */
+export type InvoiceLineKind = "treatment" | "consultation" | "adhoc";
+
 export type InvoiceLine = {
   id: string;
+  kind: InvoiceLineKind;
   treatmentId: string | null;
+  doctorId: string | null;
   description: string;
   quantity: number;
   unitPriceMinor: number;
@@ -71,6 +76,18 @@ export type InvoiceSummary = {
   discountFormatted: string;
   taxFormatted: string;
   totalFormatted: string;
+
+  /**
+   * The subtotal split by what was billed. Derived from the lines on read
+   * rather than stored: they must always add up to `subtotalMinor`, and two
+   * stored numbers that are supposed to agree eventually will not.
+   */
+  doctorFeeTotalMinor: number;
+  doctorFeeTotalFormatted: string;
+  treatmentFeeTotalMinor: number;
+  treatmentFeeTotalFormatted: string;
+  otherTotalMinor: number;
+  otherTotalFormatted: string;
 
   /** Derived from the payment ledger, never stored. */
   amountPaidMinor: number;
@@ -140,7 +157,9 @@ function paymentStatusOf(totalMinor: number, paidMinor: number): PaymentStatus {
 // ---------------------------------------------------------------------------
 
 type ResolvedItem = {
+  kind: InvoiceLineKind;
   treatmentId: string | null;
+  doctorId: string | null;
   description: string;
   quantity: number;
   unitPriceMinor: number;
@@ -190,7 +209,9 @@ async function computeTotals(
       const unitPriceMinor = toMinorUnits(item.unitPrice, options.currency);
 
       resolved.push({
+        kind: "adhoc",
         treatmentId: null,
+        doctorId: null,
         description: item.description,
         quantity: item.quantity,
         unitPriceMinor,
@@ -215,7 +236,9 @@ async function computeTotals(
       const unitPriceMinor = doctor.consultationFeeMinor;
 
       resolved.push({
+        kind: "consultation",
         treatmentId: null,
+        doctorId: String(doctor._id),
         description:
           item.description?.trim() || `Consultation — ${doctor.displayName}`,
         quantity: item.quantity,
@@ -245,7 +268,9 @@ async function computeTotals(
     const unitPriceMinor = treatment.priceMinor;
 
     resolved.push({
+      kind: "treatment",
       treatmentId: String(treatment._id),
+      doctorId: null,
       description: item.description?.trim() || treatment.name,
       quantity: item.quantity,
       unitPriceMinor,
@@ -319,7 +344,9 @@ function toInvoiceSummary(
     patientId: unknown;
     items: Array<{
       _id: unknown;
+      kind?: string | null;
       treatmentId?: unknown;
+      doctorId?: unknown;
       description: string;
       quantity: number;
       unitPriceMinor: number;
@@ -347,6 +374,35 @@ function toInvoiceSummary(
 
   const balanceDueMinor = Math.max(0, invoice.totalMinor - amountPaidMinor);
 
+  const items: InvoiceLine[] = invoice.items.map((item) => ({
+    id: String(item._id),
+    /**
+     * Falls back for lines written before `kind` existed. A treatment line is
+     * recoverable from its reference; anything else is called ad-hoc rather
+     * than guessed at from the description text.
+     */
+    kind: (item.kind as InvoiceLineKind | undefined) ??
+      (item.treatmentId ? "treatment" : "adhoc"),
+    treatmentId: item.treatmentId ? String(item.treatmentId) : null,
+    doctorId: item.doctorId ? String(item.doctorId) : null,
+    description: item.description,
+    quantity: item.quantity,
+    unitPriceMinor: item.unitPriceMinor,
+    unitPrice: toMajorUnits(item.unitPriceMinor, currency),
+    unitPriceFormatted: formatMoney(item.unitPriceMinor, currency),
+    lineTotalMinor: item.lineTotalMinor,
+    lineTotalFormatted: formatMoney(item.lineTotalMinor, currency),
+  }));
+
+  const totalOf = (kind: InvoiceLineKind): number =>
+    items
+      .filter((item) => item.kind === kind)
+      .reduce((sum, item) => sum + item.lineTotalMinor, 0);
+
+  const doctorFeeTotalMinor = totalOf("consultation");
+  const treatmentFeeTotalMinor = totalOf("treatment");
+  const otherTotalMinor = totalOf("adhoc");
+
   return {
     id: String(invoice._id),
     invoiceNumber: invoice.invoiceNumber,
@@ -358,17 +414,7 @@ function toInvoiceSummary(
         }
       : null,
     appointmentId: invoice.appointmentId ? String(invoice.appointmentId) : null,
-    items: invoice.items.map((item) => ({
-      id: String(item._id),
-      treatmentId: item.treatmentId ? String(item.treatmentId) : null,
-      description: item.description,
-      quantity: item.quantity,
-      unitPriceMinor: item.unitPriceMinor,
-      unitPrice: toMajorUnits(item.unitPriceMinor, currency),
-      unitPriceFormatted: formatMoney(item.unitPriceMinor, currency),
-      lineTotalMinor: item.lineTotalMinor,
-      lineTotalFormatted: formatMoney(item.lineTotalMinor, currency),
-    })),
+    items,
     currency,
 
     subtotalMinor: invoice.subtotalMinor,
@@ -383,6 +429,13 @@ function toInvoiceSummary(
     discountFormatted: formatMoney(invoice.discountMinor, currency),
     taxFormatted: formatMoney(invoice.taxMinor, currency),
     totalFormatted: formatMoney(invoice.totalMinor, currency),
+
+    doctorFeeTotalMinor,
+    doctorFeeTotalFormatted: formatMoney(doctorFeeTotalMinor, currency),
+    treatmentFeeTotalMinor,
+    treatmentFeeTotalFormatted: formatMoney(treatmentFeeTotalMinor, currency),
+    otherTotalMinor,
+    otherTotalFormatted: formatMoney(otherTotalMinor, currency),
 
     amountPaidMinor,
     amountPaidFormatted: formatMoney(amountPaidMinor, currency),
@@ -486,6 +539,270 @@ export async function getInvoice(
     settings.currency,
     paid.get(String(invoice._id)) ?? 0,
   );
+}
+
+// ---------------------------------------------------------------------------
+// What a patient currently owes but has not been billed for
+// ---------------------------------------------------------------------------
+
+/** One proposed line, priced from the database. */
+export type BillableCharge = {
+  /** The encounter it came from, so the accountant can see what it is for. */
+  appointmentId: string;
+  appointmentDate: string;
+  kind: Extract<InvoiceLineKind, "treatment" | "consultation">;
+  /** Exactly one of these is set, matching `kind`. */
+  treatmentId: string | null;
+  doctorId: string | null;
+  description: string;
+  unitPriceMinor: number;
+  unitPriceFormatted: string;
+};
+
+/** A charge that is already on an invoice, shown for context but not billed. */
+export type BilledCharge = BillableCharge & {
+  invoiceId: string;
+  invoiceNumber: string;
+};
+
+export type PatientBillableCharges = {
+  patient: { id: string; name: string; patientNumber: string };
+  currency: string;
+  defaultTaxRatePercent: number;
+  /** Consultation fees, one per attended appointment. */
+  doctorFees: BillableCharge[];
+  /** Catalogue treatments booked on those appointments. */
+  treatmentFees: BillableCharge[];
+  doctorFeeTotalMinor: number;
+  doctorFeeTotalFormatted: string;
+  treatmentFeeTotalMinor: number;
+  treatmentFeeTotalFormatted: string;
+  subtotalMinor: number;
+  subtotalFormatted: string;
+  /**
+   * The rest of the patient's history — charges already on an invoice.
+   *
+   * Returned so the accountant sees the patient's whole picture and can tell
+   * "there is nothing else to bill" from "the data is missing". Deliberately
+   * NOT part of any total above: adding them would bill the patient twice.
+   */
+  alreadyBilled: BilledCharge[];
+  alreadyBilledTotalMinor: number;
+  alreadyBilledTotalFormatted: string;
+};
+
+/**
+ * Everything a patient has been treated for and NOT yet billed.
+ *
+ * This is what turns "select the patient" into a finished invoice: the
+ * accountant should not have to read the patient's history and retype it, nor
+ * know which doctor saw them or what a consultation costs.
+ *
+ * Scope is deliberately narrow in two ways:
+ *
+ *   - COMPLETED appointments only. Billing for care that has not been delivered
+ *     — a booking still scheduled, or cancelled, or a no-show — is wrong.
+ *   - Appointments with NO invoice against them. An appointment already carries
+ *     at most one invoice (auto-raised on completion, see
+ *     generateInvoiceForCompletedAppointment), so excluding those is what stops
+ *     a patient being billed twice for the same visit.
+ *
+ * Prices come from the Doctor and Treatment documents, exactly as
+ * `computeTotals` reads them when the invoice is actually written — so the
+ * figures previewed here are the figures billed.
+ */
+export async function getBillableChargesForPatient(
+  patientId: string,
+  hospitalId: string,
+): Promise<PatientBillableCharges> {
+  await connectToDatabase();
+
+  const patient = await assertBelongsToTenant(
+    Patient,
+    patientId,
+    hospitalId,
+    "Patient",
+  );
+
+  const settings = await hospitalBillingSettings(hospitalId);
+
+  const appointments = await Appointment.find(
+    tenantScoped(hospitalId, { patientId, status: "completed" }),
+  )
+    .select("appointmentDate startMinutes doctorId treatmentId")
+    .sort({ appointmentDate: 1, startMinutes: 1 })
+    .limit(200)
+    .lean();
+
+  if (appointments.length === 0) {
+    return emptyCharges(patient, settings);
+  }
+
+  // One query rather than one per appointment: which of these are billed already.
+  const invoiced = await Invoice.find(
+    tenantScoped(hospitalId, {
+      appointmentId: mongoose.trusted({
+        $in: appointments.map((appointment) => appointment._id),
+      }),
+      // A cancelled invoice does not count as billed — the charge is owed again.
+      status: mongoose.trusted({ $ne: "cancelled" }),
+    }),
+  )
+    .select("appointmentId invoiceNumber")
+    .lean();
+
+  const invoiceByAppointment = new Map(
+    invoiced.map((invoice) => [String(invoice.appointmentId), invoice]),
+  );
+
+  // Batch the two price lookups, still scoped to this tenant.
+  const [doctors, treatments] = await Promise.all([
+    Doctor.find(
+      tenantScoped(hospitalId, {
+        _id: mongoose.trusted({
+          $in: appointments.map((a) => a.doctorId).filter(Boolean),
+        }),
+      }),
+    )
+      .select("displayName consultationFeeMinor")
+      .lean(),
+    Treatment.find(
+      tenantScoped(hospitalId, {
+        _id: mongoose.trusted({
+          $in: appointments.map((a) => a.treatmentId).filter(Boolean),
+        }),
+      }),
+    )
+      .select("name priceMinor")
+      .lean(),
+  ]);
+
+  const doctorById = new Map(doctors.map((d) => [String(d._id), d]));
+  const treatmentById = new Map(treatments.map((t) => [String(t._id), t]));
+
+  const doctorFees: BillableCharge[] = [];
+  const treatmentFees: BillableCharge[] = [];
+  const alreadyBilled: BilledCharge[] = [];
+
+  for (const appointment of appointments) {
+    const invoice = invoiceByAppointment.get(String(appointment._id));
+
+    /** Routes a charge to the bill, or to the "already invoiced" list. */
+    const record = (charge: BillableCharge): void => {
+      if (invoice) {
+        alreadyBilled.push({
+          ...charge,
+          invoiceId: String(invoice._id),
+          invoiceNumber: invoice.invoiceNumber,
+        });
+      } else if (charge.kind === "consultation") {
+        doctorFees.push(charge);
+      } else {
+        treatmentFees.push(charge);
+      }
+    };
+
+    const doctor = doctorById.get(String(appointment.doctorId));
+    /**
+     * A zero consultation fee is a legitimate configuration, not a missing
+     * one — the same rule the auto-generated invoice follows. Proposing a ₹0
+     * line would just be noise on the invoice.
+     */
+    if (doctor && doctor.consultationFeeMinor > 0) {
+      record({
+        appointmentId: String(appointment._id),
+        appointmentDate: appointment.appointmentDate,
+        kind: "consultation",
+        treatmentId: null,
+        doctorId: String(doctor._id),
+        description: `Consultation — ${doctor.displayName}`,
+        unitPriceMinor: doctor.consultationFeeMinor,
+        unitPriceFormatted: formatMoney(
+          doctor.consultationFeeMinor,
+          settings.currency,
+        ),
+      });
+    }
+
+    const treatment = appointment.treatmentId
+      ? treatmentById.get(String(appointment.treatmentId))
+      : undefined;
+
+    if (treatment) {
+      record({
+        appointmentId: String(appointment._id),
+        appointmentDate: appointment.appointmentDate,
+        kind: "treatment",
+        treatmentId: String(treatment._id),
+        doctorId: null,
+        description: treatment.name,
+        unitPriceMinor: treatment.priceMinor,
+        unitPriceFormatted: formatMoney(treatment.priceMinor, settings.currency),
+      });
+    }
+  }
+
+  const sum = (charges: readonly BillableCharge[]): number =>
+    charges.reduce((total, charge) => total + charge.unitPriceMinor, 0);
+
+  const doctorFeeTotalMinor = sum(doctorFees);
+  const treatmentFeeTotalMinor = sum(treatmentFees);
+  const subtotalMinor = doctorFeeTotalMinor + treatmentFeeTotalMinor;
+  const alreadyBilledTotalMinor = sum(alreadyBilled);
+
+  return {
+    patient: {
+      id: String(patient._id),
+      name: `${patient.firstName} ${patient.lastName}`.trim(),
+      patientNumber: patient.patientNumber,
+    },
+    currency: settings.currency,
+    defaultTaxRatePercent: settings.defaultTaxRatePercent,
+    doctorFees,
+    treatmentFees,
+    doctorFeeTotalMinor,
+    doctorFeeTotalFormatted: formatMoney(doctorFeeTotalMinor, settings.currency),
+    treatmentFeeTotalMinor,
+    treatmentFeeTotalFormatted: formatMoney(
+      treatmentFeeTotalMinor,
+      settings.currency,
+    ),
+    subtotalMinor,
+    subtotalFormatted: formatMoney(subtotalMinor, settings.currency),
+    alreadyBilled,
+    alreadyBilledTotalMinor,
+    alreadyBilledTotalFormatted: formatMoney(
+      alreadyBilledTotalMinor,
+      settings.currency,
+    ),
+  };
+}
+
+function emptyCharges(
+  patient: { _id: unknown; firstName: string; lastName: string; patientNumber: string },
+  settings: { currency: string; defaultTaxRatePercent: number },
+): PatientBillableCharges {
+  const zero = formatMoney(0, settings.currency);
+  return {
+    patient: {
+      id: String(patient._id),
+      name: `${patient.firstName} ${patient.lastName}`.trim(),
+      patientNumber: patient.patientNumber,
+    },
+    currency: settings.currency,
+    defaultTaxRatePercent: settings.defaultTaxRatePercent,
+    doctorFees: [],
+    treatmentFees: [],
+    doctorFeeTotalMinor: 0,
+    doctorFeeTotalFormatted: zero,
+    treatmentFeeTotalMinor: 0,
+    treatmentFeeTotalFormatted: zero,
+    subtotalMinor: 0,
+    subtotalFormatted: zero,
+    alreadyBilled: [],
+    alreadyBilledTotalMinor: 0,
+    alreadyBilledTotalFormatted: zero,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -7,14 +7,6 @@ import { SelectField, TextAreaField, TextField } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
 
-export type AttachedResponse = {
-  id: string;
-  formId: string;
-  formName: string;
-  formVersion: number;
-  submittedAt: string;
-};
-
 export type VisitRecord = {
   id: string;
   patient: { id: string; name: string; patientNumber: string } | null;
@@ -27,7 +19,6 @@ export type VisitRecord = {
   notes: string;
   recommendations: string;
   followUpDate: string | null;
-  formResponses: AttachedResponse[];
   createdAt: string;
   updatedAt: string;
 };
@@ -60,15 +51,14 @@ export type VisitAppointmentSource = {
  * consultation may be recorded with none of them filled in. Only the patient,
  * the doctor and the date are required.
  *
- * Notes, the follow-up date and attached form responses are deliberately NOT
- * collected here. They still exist on the model, in the schemas and on stored
- * records, and the read-only view still displays them; this form simply does
- * not capture them.
+ * Notes and the follow-up date are deliberately NOT collected here. They still
+ * exist on the model, in the schemas and on stored records, and the read-only
+ * view still displays them; this form simply does not capture them.
  *
- * That is why the payloads below omit those three keys rather than sending
- * empty values: every field in `updateVisitSchema` is applied only when it is
+ * That is why the payloads below omit those keys rather than sending empty
+ * values: every field in `updateVisitSchema` is applied only when it is
  * `!== undefined`, so omitting preserves whatever a record already holds.
- * Sending `""` or `[]` would silently erase existing content on every save.
+ * Sending `""` would silently erase existing content on every save.
  */
 export function VisitFormModal({
   visit,

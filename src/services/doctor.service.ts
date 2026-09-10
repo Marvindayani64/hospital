@@ -5,6 +5,7 @@ import {
   Department,
   Doctor,
   Hospital,
+  Prescription,
   User,
   Visit,
 } from "@/models";
@@ -417,18 +418,24 @@ export async function deleteDoctor(
     "Doctor",
   );
 
-  const [appointmentCount, visitCount] = await Promise.all([
+  const [appointmentCount, visitCount, prescriptionCount] = await Promise.all([
     Appointment.countDocuments(tenantScoped(actor.hospitalId, { doctorId })),
     Visit.countDocuments(tenantScoped(actor.hospitalId, { doctorId })),
+    // Already implied by the visit count — every prescription has a visit —
+    // but named separately so the message says what is on the record.
+    Prescription.countDocuments(tenantScoped(actor.hospitalId, { doctorId })),
   ]);
 
-  if (appointmentCount > 0 || visitCount > 0) {
+  if (appointmentCount > 0 || visitCount > 0 || prescriptionCount > 0) {
     const parts = [
       appointmentCount > 0
         ? `${appointmentCount} ${appointmentCount === 1 ? "appointment" : "appointments"}`
         : null,
       visitCount > 0
         ? `${visitCount} ${visitCount === 1 ? "visit" : "visits"}`
+        : null,
+      prescriptionCount > 0
+        ? `${prescriptionCount} ${prescriptionCount === 1 ? "prescription" : "prescriptions"}`
         : null,
     ].filter(Boolean);
 

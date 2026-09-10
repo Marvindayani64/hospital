@@ -113,11 +113,21 @@ async function signIn(email: string, password: string): Promise<Jar> {
   return jar;
 }
 
+function futureDate(daysAhead: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + daysAhead);
+  return date.toISOString().slice(0, 10);
+}
+
 type Tenant = {
   jar: Jar;
   patientId: string;
   treatmentId: string;
   cheapTreatmentId: string;
+  departmentId: string;
+  doctorId: string;
+  /** The doctor's consultation fee, in minor units. */
+  consultationFeeMinor: number;
 };
 
 async function buildTenant(
@@ -194,11 +204,26 @@ async function buildTenant(
     jar,
   });
 
+  // A doctor with a real consultation fee, so doctor fees can be billed apart
+  // from treatment fees.
+  const doctor = await call("/api/doctors", {
+    method: "POST",
+    body: {
+      displayName: `Dr. ${label}`,
+      departmentIds: [department.json.data.id],
+      consultationFee: 40,
+    },
+    jar,
+  });
+
   return {
     jar,
     patientId: patient.json.data.id,
     treatmentId: treatment.json.data.id,
     cheapTreatmentId: cheap.json.data.id,
+    departmentId: department.json.data.id,
+    doctorId: doctor.json.data.id,
+    consultationFeeMinor: 4000,
   };
 }
 
@@ -216,6 +241,234 @@ async function main(): Promise<void> {
   const alpha = await buildTenant(superJar, "Alpha", stamp, 10);
   const beta = await buildTenant(superJar, "Beta", stamp, 0);
   check("Two hospitals configured", Boolean(alpha.treatmentId && beta.treatmentId));
+
+  // -------------------------------------------------------------------------
+  section("Field-wise charges for a patient (doctor fees vs treatment fees)");
+
+  /** Books an appointment and completes it, so it becomes billable care. */
+  async function attendedAppointment(
+    tenant: Tenant,
+    date: string,
+    startTime: string,
+    endTime: string,
+    treatmentId: string | null,
+  ): Promise<string> {
+    const booked = await call("/api/appointments", {
+      method: "POST",
+      body: {
+        patientId: tenant.patientId,
+        doctorId: tenant.doctorId,
+        departmentId: tenant.departmentId,
+        treatmentId,
+        appointmentDate: date,
+        startTime,
+        endTime,
+      },
+      jar: tenant.jar,
+    });
+    if (booked.status !== 201) {
+      throw new Error(
+        `Could not book: ${booked.status} ${JSON.stringify(booked.json?.error ?? "")}`,
+      );
+    }
+    const id = booked.json.data.id as string;
+
+    await call(`/api/appointments/${id}`, {
+      method: "PUT",
+      body: { status: "checked_in" },
+      jar: tenant.jar,
+    });
+    await call(`/api/appointments/${id}`, {
+      method: "PUT",
+      body: { status: "completed" },
+      jar: tenant.jar,
+    });
+    return id;
+  }
+
+  const attendedOne = await attendedAppointment(
+    alpha,
+    futureDate(1),
+    "09:00",
+    "09:30",
+    alpha.treatmentId,
+  );
+
+  /**
+   * Completing an appointment auto-raises a draft invoice, so that encounter is
+   * already billed. It must therefore NOT be offered again — this is the check
+   * that stops a patient being charged twice for one visit.
+   */
+  const afterAuto = await call(
+    `/api/patients/${alpha.patientId}/billable-charges`,
+    { jar: alpha.jar },
+  );
+  check(
+    "Charges readable",
+    afterAuto.status === 200,
+    `got ${afterAuto.status} ${JSON.stringify(afterAuto.json?.error ?? "")}`,
+  );
+  check(
+    "An appointment already auto-invoiced is not offered for billing again",
+    (afterAuto.json.data.doctorFees as any[]).length === 0 &&
+      (afterAuto.json.data.treatmentFees as any[]).length === 0,
+    JSON.stringify({
+      doctor: afterAuto.json?.data?.doctorFees,
+      treatment: afterAuto.json?.data?.treatmentFees,
+    }),
+  );
+  check(
+    "It is still reported as already invoiced, for context",
+    (afterAuto.json.data.alreadyBilled as any[]).some(
+      (c) => c.appointmentId === attendedOne,
+    ),
+    JSON.stringify(afterAuto.json?.data?.alreadyBilled),
+  );
+  check(
+    "Already-billed charges are excluded from the billable subtotal",
+    afterAuto.json.data.subtotalMinor === 0 &&
+      afterAuto.json.data.alreadyBilledTotalMinor > 0,
+    `subtotal ${afterAuto.json?.data?.subtotalMinor}, billed ${afterAuto.json?.data?.alreadyBilledTotalMinor}`,
+  );
+
+  /**
+   * Cancelling that invoice makes the care owed again — the charge must come
+   * back into the billable list rather than vanishing.
+   */
+  const autoInvoiceId = (afterAuto.json.data.alreadyBilled as any[])[0]
+    ?.invoiceId as string;
+  await call(`/api/invoices/${autoInvoiceId}`, {
+    method: "PUT",
+    body: { status: "cancelled", cancellationReason: "Raised in error" },
+    jar: alpha.jar,
+  });
+
+  const afterCancel = await call(
+    `/api/patients/${alpha.patientId}/billable-charges`,
+    { jar: alpha.jar },
+  );
+  check(
+    "Cancelling the invoice returns the charges to the billable list",
+    (afterCancel.json.data.doctorFees as any[]).length === 1 &&
+      (afterCancel.json.data.treatmentFees as any[]).length === 1,
+    JSON.stringify({
+      doctor: afterCancel.json?.data?.doctorFees,
+      treatment: afterCancel.json?.data?.treatmentFees,
+    }),
+  );
+  check(
+    "Doctor fee is priced from the doctor's profile, not the catalogue",
+    afterCancel.json.data.doctorFeeTotalMinor === alpha.consultationFeeMinor,
+    `${afterCancel.json?.data?.doctorFeeTotalMinor} vs ${alpha.consultationFeeMinor}`,
+  );
+  check(
+    "Treatment fee is priced from the catalogue (150.00 -> 15000)",
+    afterCancel.json.data.treatmentFeeTotalMinor === 15000,
+    String(afterCancel.json?.data?.treatmentFeeTotalMinor),
+  );
+  check(
+    "The two field-wise totals add up to the subtotal",
+    afterCancel.json.data.subtotalMinor ===
+      afterCancel.json.data.doctorFeeTotalMinor +
+        afterCancel.json.data.treatmentFeeTotalMinor,
+    `${afterCancel.json?.data?.subtotalMinor}`,
+  );
+
+  /**
+   * The whole point: hand those proposed charges straight back as an invoice.
+   * The accountant sends references only, and the server prices them.
+   */
+  const fromCharges = await call("/api/invoices", {
+    method: "POST",
+    body: {
+      patientId: alpha.patientId,
+      items: [
+        ...(afterCancel.json.data.doctorFees as any[]).map((c) => ({
+          doctorId: c.doctorId,
+          quantity: 1,
+        })),
+        ...(afterCancel.json.data.treatmentFees as any[]).map((c) => ({
+          treatmentId: c.treatmentId,
+          quantity: 1,
+        })),
+      ],
+    },
+    jar: alpha.jar,
+  });
+  check(
+    "An invoice can be raised directly from the proposed charges",
+    fromCharges.status === 201,
+    `got ${fromCharges.status} ${JSON.stringify(fromCharges.json?.error ?? "")}`,
+  );
+  check(
+    "Its subtotal matches what the accountant was shown",
+    fromCharges.json.data.subtotalMinor === afterCancel.json.data.subtotalMinor,
+    `${fromCharges.json?.data?.subtotalMinor} vs ${afterCancel.json?.data?.subtotalMinor}`,
+  );
+  check(
+    "The saved invoice keeps the doctor/treatment split",
+    fromCharges.json.data.doctorFeeTotalMinor === alpha.consultationFeeMinor &&
+      fromCharges.json.data.treatmentFeeTotalMinor === 15000,
+    `doctor ${fromCharges.json?.data?.doctorFeeTotalMinor}, treatment ${fromCharges.json?.data?.treatmentFeeTotalMinor}`,
+  );
+  check(
+    "Each line records what kind of charge it is",
+    (fromCharges.json.data.items as any[]).some(
+      (i) => i.kind === "consultation" && i.doctorId === alpha.doctorId,
+    ) &&
+      (fromCharges.json.data.items as any[]).some(
+        (i) => i.kind === "treatment" && i.treatmentId === alpha.treatmentId,
+      ),
+    JSON.stringify(
+      (fromCharges.json.data.items as any[]).map((i) => i.kind),
+    ),
+  );
+  /**
+   * The Section 27 guarantee, applied to consultation lines: a doctor's fee is
+   * read from their profile, so a price in the request body is ignored exactly
+   * as it is for catalogue treatments.
+   */
+  const spoofedFee = await call("/api/invoices", {
+    method: "POST",
+    body: {
+      patientId: alpha.patientId,
+      items: [
+        {
+          doctorId: alpha.doctorId,
+          quantity: 1,
+          unitPrice: 1,
+          unitPriceMinor: 1,
+          lineTotalMinor: 1,
+        },
+      ],
+    },
+    jar: alpha.jar,
+  });
+  check(
+    "A consultation line with a spoofed price is still accepted",
+    spoofedFee.status === 201,
+    `got ${spoofedFee.status} ${JSON.stringify(spoofedFee.json?.error ?? "")}`,
+  );
+  check(
+    "Spoofed doctor fee IGNORED — the profile's fee is billed",
+    spoofedFee.json.data.items[0].unitPriceMinor === alpha.consultationFeeMinor,
+    `${spoofedFee.json?.data?.items?.[0]?.unitPriceMinor} vs ${alpha.consultationFeeMinor}`,
+  );
+  check(
+    "That line is recorded as a consultation, not an ad-hoc charge",
+    spoofedFee.json.data.items[0].kind === "consultation",
+    spoofedFee.json?.data?.items?.[0]?.kind,
+  );
+
+  const crossTenantCharges = await call(
+    `/api/patients/${beta.patientId}/billable-charges`,
+    { jar: alpha.jar },
+  );
+  check(
+    "Another hospital's patient has no billable charges here",
+    crossTenantCharges.status === 404,
+    `got ${crossTenantCharges.status}`,
+  );
 
   // -------------------------------------------------------------------------
   section("Prices come from the database (test 15 / Section 27)");

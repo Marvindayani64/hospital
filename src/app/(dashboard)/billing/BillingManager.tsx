@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -12,15 +12,23 @@ import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
 import { useInitialSearch } from "@/lib/client/use-initial-search";
 import { PAYMENT_METHODS } from "@/lib/domain/enums";
-import type { Currency } from "@/utils/money";
+import {
+  formatMoney,
+  percentOfMinor,
+  toMinorUnits,
+  type Currency,
+} from "@/utils/money";
 import type { Paginated } from "@/types";
 import { cn } from "@/utils/cn";
 
 type InvoiceLine = {
   id: string;
+  kind: "treatment" | "consultation" | "adhoc";
   treatmentId: string | null;
+  doctorId: string | null;
   description: string;
   quantity: number;
+  unitPriceMinor: number;
   unitPriceFormatted: string;
   lineTotalFormatted: string;
 };
@@ -39,6 +47,10 @@ type Invoice = {
   taxFormatted: string;
   totalFormatted: string;
   totalMinor: number;
+  doctorFeeTotalFormatted: string;
+  treatmentFeeTotalFormatted: string;
+  otherTotalFormatted: string;
+  otherTotalMinor: number;
   amountPaidFormatted: string;
   balanceDueMinor: number;
   balanceDueFormatted: string;
@@ -64,6 +76,8 @@ type PatientOption = { id: string; fullName: string; patientNumber: string };
 type TreatmentOption = {
   id: string;
   name: string;
+  /** Preview arithmetic only; the server re-reads this when it writes. */
+  priceMinor: number;
   priceFormatted: string;
 };
 
@@ -620,7 +634,29 @@ export function BillingManager({
             </table>
 
             <dl className="flex flex-col gap-1.5 border-t border-ink-200 pt-3 text-sm">
+              {/* The field-wise split, so a bill can be read as "what the
+                  doctor charged" against "what the treatment cost". */}
               <div className="flex justify-between">
+                <dt className="text-ink-600">Doctor fees</dt>
+                <dd className="tabular-nums text-ink-900">
+                  {viewing.doctorFeeTotalFormatted}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-ink-600">Treatment fees</dt>
+                <dd className="tabular-nums text-ink-900">
+                  {viewing.treatmentFeeTotalFormatted}
+                </dd>
+              </div>
+              {viewing.otherTotalMinor > 0 ? (
+                <div className="flex justify-between">
+                  <dt className="text-ink-600">Other charges</dt>
+                  <dd className="tabular-nums text-ink-900">
+                    {viewing.otherTotalFormatted}
+                  </dd>
+                </div>
+              ) : null}
+              <div className="flex justify-between border-t border-ink-200 pt-1.5">
                 <dt className="text-ink-600">Subtotal</dt>
                 <dd className="tabular-nums text-ink-900">
                   {viewing.subtotalFormatted}
@@ -726,7 +762,61 @@ export function BillingManager({
 
 // ---------------------------------------------------------------------------
 
-type ComposerLine = { treatmentId: string; quantity: number };
+/**
+ * A line being composed.
+ *
+ * `unitPriceMinor` is carried purely so the dialog can total the bill as it is
+ * built. It is NEVER sent: the payload below has no price field at all, and the
+ * server re-reads every price from the catalogue when it writes the invoice.
+ */
+type ComposerLine = {
+  kind: "treatment" | "consultation";
+  treatmentId: string | null;
+  doctorId: string | null;
+  description: string;
+  quantity: number;
+  unitPriceMinor: number;
+};
+
+type BillableCharge = {
+  appointmentId: string;
+  appointmentDate: string;
+  kind: "treatment" | "consultation";
+  treatmentId: string | null;
+  doctorId: string | null;
+  description: string;
+  unitPriceMinor: number;
+  unitPriceFormatted: string;
+};
+
+type BilledCharge = BillableCharge & {
+  invoiceId: string;
+  invoiceNumber: string;
+};
+
+type PatientBillableCharges = {
+  patient: { id: string; name: string; patientNumber: string };
+  currency: string;
+  defaultTaxRatePercent: number;
+  doctorFees: BillableCharge[];
+  treatmentFees: BillableCharge[];
+  doctorFeeTotalFormatted: string;
+  treatmentFeeTotalFormatted: string;
+  subtotalFormatted: string;
+  alreadyBilled: BilledCharge[];
+  alreadyBilledTotalFormatted: string;
+};
+
+function chargeToLine(charge: BillableCharge): ComposerLine {
+  return {
+    kind: charge.kind,
+    treatmentId: charge.treatmentId,
+    doctorId: charge.doctorId,
+    description: charge.description,
+    quantity: 1,
+    unitPriceMinor: charge.unitPriceMinor,
+  };
+}
 
 function InvoiceComposer({
   invoice,
@@ -751,12 +841,22 @@ function InvoiceComposer({
   const [patientId, setPatientId] = useState(invoice?.patient?.id ?? "");
   const [lines, setLines] = useState<ComposerLine[]>(
     invoice?.items
-      .filter((item) => item.treatmentId)
+      // Ad-hoc lines are not editable here — this dialog has no price field to
+      // show one in, and dropping it silently on save would be worse.
+      .filter((item) => item.kind !== "adhoc")
       .map((item) => ({
-        treatmentId: item.treatmentId!,
+        kind: item.kind as "treatment" | "consultation",
+        treatmentId: item.treatmentId,
+        doctorId: item.doctorId,
+        description: item.description,
         quantity: item.quantity,
+        unitPriceMinor: item.unitPriceMinor,
       })) ?? [],
   );
+  /** Charges loaded for the chosen patient; null until one is chosen. */
+  const [charges, setCharges] = useState<PatientBillableCharges | null>(null);
+  const [loadingCharges, setLoadingCharges] = useState(false);
+  const [chargesError, setChargesError] = useState<string | null>(null);
   const [discountType, setDiscountType] = useState<Invoice["discountType"]>(
     invoice?.discountType ?? "none",
   );
@@ -771,11 +871,93 @@ function InvoiceComposer({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
+  /**
+   * Choosing a patient loads what they owe and fills the invoice in.
+   *
+   * Only when creating: an existing draft already has its lines, and silently
+   * replacing them with a fresh proposal would discard the accountant's edits.
+   */
+  useEffect(() => {
+    if (editing || !patientId) {
+      setCharges(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingCharges(true);
+    setChargesError(null);
+
+    api
+      .get<PatientBillableCharges>(
+        `/api/patients/${patientId}/billable-charges`,
+        controller.signal,
+      )
+      .then((result) => {
+        setCharges(result);
+        setLines([
+          ...result.doctorFees.map(chargeToLine),
+          ...result.treatmentFees.map(chargeToLine),
+        ]);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setChargesError(
+          err instanceof ApiClientError
+            ? err.message
+            : "Could not load this patient's charges.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingCharges(false);
+      });
+
+    return () => controller.abort();
+  }, [patientId, editing]);
+
   function addLine() {
     const first = treatments[0];
     if (!first) return;
-    setLines((current) => [...current, { treatmentId: first.id, quantity: 1 }]);
+    setLines((current) => [
+      ...current,
+      {
+        kind: "treatment",
+        treatmentId: first.id,
+        doctorId: null,
+        description: first.name,
+        quantity: 1,
+        unitPriceMinor: first.priceMinor,
+      },
+    ]);
   }
+
+  const doctorLines = lines.filter((line) => line.kind === "consultation");
+  const treatmentLines = lines.filter((line) => line.kind === "treatment");
+
+  const sumOf = (group: ComposerLine[]): number =>
+    group.reduce((total, line) => total + line.unitPriceMinor * line.quantity, 0);
+
+  /**
+   * A live preview of what the server will store.
+   *
+   * It uses the same minor-unit prices the server will read and the same
+   * rounding helpers it will apply, so the figure shown here is the figure
+   * billed — not an approximation that drifts by a paisa.
+   */
+  const doctorFeeMinor = sumOf(doctorLines);
+  const treatmentFeeMinor = sumOf(treatmentLines);
+  const subtotalMinor = doctorFeeMinor + treatmentFeeMinor;
+
+  const discountNumber = Number(discountValue) || 0;
+  const rawDiscountMinor =
+    discountType === "fixed"
+      ? toMinorUnits(discountNumber, currency.code)
+      : discountType === "percent"
+        ? percentOfMinor(subtotalMinor, discountNumber)
+        : 0;
+  const discountMinor = Math.min(rawDiscountMinor, subtotalMinor);
+  const taxableMinor = subtotalMinor - discountMinor;
+  const taxMinor = percentOfMinor(taxableMinor, Number(taxRatePercent) || 0);
+  const totalMinor = taxableMinor + taxMinor;
 
   async function save() {
     setSaving(true);
@@ -783,14 +965,16 @@ function InvoiceComposer({
     setFormError(null);
 
     /**
-     * Only treatment ids and quantities are sent — there is no price field.
-     * The server reads every price from the catalogue.
+     * References and quantities only — there is no price field on the wire.
+     * The server reads each treatment's price from the catalogue and each
+     * doctor's fee from their profile.
      */
     const payload = {
-      items: lines.map((line) => ({
-        treatmentId: line.treatmentId,
-        quantity: line.quantity,
-      })),
+      items: lines.map((line) =>
+        line.kind === "consultation"
+          ? { doctorId: line.doctorId, quantity: line.quantity }
+          : { treatmentId: line.treatmentId, quantity: line.quantity },
+      ),
       discountType,
       discountValue: Number(discountValue) || 0,
       taxRatePercent: Number(taxRatePercent) || 0,
@@ -823,7 +1007,11 @@ function InvoiceComposer({
       open
       onClose={onClose}
       title={editing ? `Edit ${invoice.invoiceNumber}` : "New invoice"}
-      description="Prices come from your treatment catalogue and are calculated on the server."
+      description={
+        editing
+          ? "Prices come from your catalogue and are calculated on the server."
+          : "Choose a patient and their unbilled doctor and treatment fees fill in automatically."
+      }
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>
@@ -873,105 +1061,101 @@ function InvoiceComposer({
           />
         )}
 
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-medium text-ink-800">Lines</p>
+        {chargesError ? (
+          <div
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800"
+          >
+            {chargesError}
+          </div>
+        ) : null}
+
+        {loadingCharges ? (
+          <p className="text-sm text-ink-500">
+            Loading this patient&apos;s charges…
+          </p>
+        ) : null}
+
+        {charges &&
+        !loadingCharges &&
+        charges.doctorFees.length === 0 &&
+        charges.treatmentFees.length === 0 ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-900">
+            {charges.alreadyBilled.length > 0
+              ? "Nothing left to bill — every completed appointment for this patient is already on an invoice. Add a treatment line below to bill something else."
+              : "This patient has no completed appointments to bill. Add a treatment line below to bill something else."}
+          </div>
+        ) : null}
+
+        {/* Doctor fees. Populated from the patient's attended appointments;
+            there is no picker because the Accountant role cannot read the
+            doctor list, and the fee has to come from the encounter anyway. */}
+        <LineGroup
+          title="Doctor fees"
+          emptyLabel="No unbilled consultation fees."
+          lines={doctorLines}
+          totalFormatted={formatMoney(doctorFeeMinor, currency.code)}
+          onQuantityChange={(line, quantity) =>
+            setLines((current) =>
+              current.map((l) => (l === line ? { ...l, quantity } : l)),
+            )
+          }
+          onRemove={(line) =>
+            setLines((current) => current.filter((l) => l !== line))
+          }
+          currency={currency}
+        />
+
+        {/* Treatment fees. Auto-populated the same way, but an accountant can
+            also add a catalogue line by hand. */}
+        <LineGroup
+          title="Treatment fees"
+          emptyLabel="No unbilled treatments."
+          lines={treatmentLines}
+          totalFormatted={formatMoney(treatmentFeeMinor, currency.code)}
+          onQuantityChange={(line, quantity) =>
+            setLines((current) =>
+              current.map((l) => (l === line ? { ...l, quantity } : l)),
+            )
+          }
+          onRemove={(line) =>
+            setLines((current) => current.filter((l) => l !== line))
+          }
+          currency={currency}
+          action={
             <button
               type="button"
               onClick={addLine}
               disabled={treatments.length === 0}
               className="text-xs font-medium text-gold-700 hover:text-gold-800 disabled:opacity-50"
             >
-              Add line
+              Add treatment
             </button>
-          </div>
+          }
+          onTreatmentChange={(line, treatmentId) => {
+            const treatment = treatments.find((t) => t.id === treatmentId);
+            if (!treatment) return;
+            setLines((current) =>
+              current.map((l) =>
+                l === line
+                  ? {
+                      ...l,
+                      treatmentId: treatment.id,
+                      description: treatment.name,
+                      unitPriceMinor: treatment.priceMinor,
+                    }
+                  : l,
+              ),
+            );
+          }}
+          treatments={treatments}
+        />
 
-          {treatments.length === 0 ? (
-            <p className="text-xs text-amber-700">
-              No active treatments available. Add treatments to your catalogue
-              first.
-            </p>
-          ) : lines.length === 0 ? (
-            <p className="text-xs text-ink-500">Add at least one line.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {lines.map((line, index) => {
-                const treatment = treatments.find(
-                  (item) => item.id === line.treatmentId,
-                );
-                return (
-                  <div key={index} className="flex items-center gap-2">
-                    <select
-                      aria-label={`Line ${index + 1} treatment`}
-                      value={line.treatmentId}
-                      onChange={(event) =>
-                        setLines((current) =>
-                          current.map((l, i) =>
-                            i === index
-                              ? { ...l, treatmentId: event.target.value }
-                              : l,
-                          ),
-                        )
-                      }
-                      className="h-9 flex-1 rounded-lg border border-ink-200 px-2.5 text-sm hover:border-ink-300 focus:border-gold-500"
-                    >
-                      {treatments.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} — {item.priceFormatted}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      aria-label={`Line ${index + 1} quantity`}
-                      min={1}
-                      value={line.quantity}
-                      onChange={(event) =>
-                        setLines((current) =>
-                          current.map((l, i) =>
-                            i === index
-                              ? { ...l, quantity: Number(event.target.value) || 1 }
-                              : l,
-                          ),
-                        )
-                      }
-                      className="h-9 w-20 rounded-lg border border-ink-200 px-2.5 text-sm hover:border-ink-300 focus:border-gold-500"
-                    />
-                    <button
-                      type="button"
-                      aria-label={`Remove line ${index + 1}`}
-                      onClick={() =>
-                        setLines((current) =>
-                          current.filter((_, i) => i !== index),
-                        )
-                      }
-                      className="rounded-md p-1.5 text-ink-400 hover:bg-red-50 hover:text-red-600"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M6 6l12 12M18 6 6 18"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </button>
-                    {treatment ? (
-                      <span className="sr-only">
-                        {treatment.name} at {treatment.priceFormatted}
-                      </span>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {fieldErrors.items ? (
-            <p role="alert" className="mt-1 text-xs font-medium text-red-600">
-              {fieldErrors.items}
-            </p>
-          ) : null}
-        </div>
+        {fieldErrors.items ? (
+          <p role="alert" className="text-xs font-medium text-red-600">
+            {fieldErrors.items}
+          </p>
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-3">
           <SelectField
@@ -1015,12 +1199,204 @@ function InvoiceComposer({
           error={fieldErrors.notes}
         />
 
-        <p className="rounded-lg border border-ink-200 bg-ink-50 px-3 py-2.5 text-xs text-ink-600">
-          Totals are calculated on the server from your catalogue prices. They
-          will appear once the draft is saved.
-        </p>
+        <div className="rounded-lg border border-ink-200 bg-ink-50 px-3.5 py-3">
+          <dl className="flex flex-col gap-1.5 text-sm">
+            <div className="flex justify-between text-ink-600">
+              <dt>Doctor fees</dt>
+              <dd className="tabular-nums">
+                {formatMoney(doctorFeeMinor, currency.code)}
+              </dd>
+            </div>
+            <div className="flex justify-between text-ink-600">
+              <dt>Treatment fees</dt>
+              <dd className="tabular-nums">
+                {formatMoney(treatmentFeeMinor, currency.code)}
+              </dd>
+            </div>
+            <div className="flex justify-between border-t border-ink-200 pt-1.5 text-ink-700">
+              <dt>Subtotal</dt>
+              <dd className="tabular-nums">
+                {formatMoney(subtotalMinor, currency.code)}
+              </dd>
+            </div>
+            {discountMinor > 0 ? (
+              <div className="flex justify-between text-ink-600">
+                <dt>Discount</dt>
+                <dd className="tabular-nums">
+                  −{formatMoney(discountMinor, currency.code)}
+                </dd>
+              </div>
+            ) : null}
+            {taxMinor > 0 ? (
+              <div className="flex justify-between text-ink-600">
+                <dt>Tax</dt>
+                <dd className="tabular-nums">
+                  {formatMoney(taxMinor, currency.code)}
+                </dd>
+              </div>
+            ) : null}
+            <div className="flex justify-between border-t border-ink-200 pt-1.5 text-base font-semibold text-ink-900">
+              <dt>Total</dt>
+              <dd className="tabular-nums">
+                {formatMoney(totalMinor, currency.code)}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-ink-500">
+            Every price here comes from the server; it recalculates the same
+            figures when the draft is saved.
+          </p>
+        </div>
+
+        {/* The rest of the patient's history, for context. Excluded from the
+            totals above on purpose — these are already on an invoice, and
+            billing them again would charge the patient twice. */}
+        {charges && charges.alreadyBilled.length > 0 ? (
+          <details className="rounded-lg border border-ink-200 px-3.5 py-2.5">
+            <summary className="cursor-pointer text-sm text-ink-700">
+              Already invoiced
+              <span className="ml-2 tabular-nums text-ink-500">
+                {charges.alreadyBilledTotalFormatted}
+              </span>
+            </summary>
+            <ul className="mt-2 flex flex-col gap-1 border-t border-ink-100 pt-2">
+              {charges.alreadyBilled.map((charge, index) => (
+                <li
+                  key={`${charge.appointmentId}-${index}`}
+                  className="flex items-center justify-between gap-3 text-xs text-ink-600"
+                >
+                  <span className="truncate">
+                    <span className="tabular-nums text-ink-500">
+                      {charge.appointmentDate}
+                    </span>{" "}
+                    {charge.description}
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    {charge.unitPriceFormatted}
+                    <span className="ml-2 font-mono text-ink-400">
+                      {charge.invoiceNumber}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-ink-500">
+              Not included above — these are on existing invoices.
+            </p>
+          </details>
+        ) : null}
       </div>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * One field-wise block of invoice lines with its own total — doctor fees apart
+ * from treatment fees, which is how the front desk reads a bill.
+ */
+function LineGroup({
+  title,
+  emptyLabel,
+  lines,
+  totalFormatted,
+  onQuantityChange,
+  onRemove,
+  currency,
+  action,
+  onTreatmentChange,
+  treatments,
+}: {
+  title: string;
+  emptyLabel: string;
+  lines: ComposerLine[];
+  totalFormatted: string;
+  onQuantityChange: (line: ComposerLine, quantity: number) => void;
+  onRemove: (line: ComposerLine) => void;
+  currency: Currency;
+  action?: ReactNode;
+  onTreatmentChange?: (line: ComposerLine, treatmentId: string) => void;
+  treatments?: TreatmentOption[];
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm font-medium text-ink-800">
+          {title}
+          <span className="ml-2 font-normal tabular-nums text-ink-500">
+            {totalFormatted}
+          </span>
+        </p>
+        {action}
+      </div>
+
+      {lines.length === 0 ? (
+        <p className="text-xs text-ink-500">{emptyLabel}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {lines.map((line, index) => (
+            <div key={index} className="flex items-center gap-2">
+              {onTreatmentChange && treatments ? (
+                <select
+                  aria-label={`${title} line ${index + 1}`}
+                  value={line.treatmentId ?? ""}
+                  onChange={(event) =>
+                    onTreatmentChange(line, event.target.value)
+                  }
+                  className="h-9 flex-1 rounded-lg border border-ink-200 px-2.5 text-sm hover:border-ink-300 focus:border-gold-500"
+                >
+                  {treatments.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} — {item.priceFormatted}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="flex-1 truncate text-sm text-ink-900">
+                  {line.description}
+                </span>
+              )}
+
+              <span className="w-24 shrink-0 text-right text-sm tabular-nums text-ink-600">
+                {formatMoney(line.unitPriceMinor, currency.code)}
+              </span>
+
+              <input
+                type="number"
+                aria-label={`${title} line ${index + 1} quantity`}
+                min={1}
+                value={line.quantity}
+                onChange={(event) =>
+                  onQuantityChange(line, Number(event.target.value) || 1)
+                }
+                className="h-9 w-16 shrink-0 rounded-lg border border-ink-200 px-2.5 text-sm hover:border-ink-300 focus:border-gold-500"
+              />
+
+              <span className="w-24 shrink-0 text-right text-sm font-medium tabular-nums text-ink-900">
+                {formatMoney(line.unitPriceMinor * line.quantity, currency.code)}
+              </span>
+
+              <button
+                type="button"
+                aria-label={`Remove ${title} line ${index + 1}`}
+                onClick={() => onRemove(line)}
+                className="rounded-md p-1.5 text-ink-400 hover:bg-red-50 hover:text-red-600"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M6 6l12 12M18 6 6 18"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
