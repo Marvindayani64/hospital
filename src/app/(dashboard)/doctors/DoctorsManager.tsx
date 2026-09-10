@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardBody } from "@/components/ui/Card";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +10,11 @@ import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/States";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
 import { useInitialSearch } from "@/lib/client/use-initial-search";
-import { SPECIALISATION_SUGGESTIONS } from "@/lib/domain/suggestions";
+import {
+  DEPARTMENT_SUGGESTIONS,
+  SPECIALISATION_SUGGESTIONS,
+} from "@/lib/domain/suggestions";
+import { cn } from "@/utils/cn";
 import { WEEKDAY_NAMES } from "@/utils/time";
 import type { Currency } from "@/utils/money";
 import type { Paginated } from "@/types";
@@ -55,7 +59,7 @@ export function DoctorsManager({
   canUpdate: boolean;
   canDelete: boolean;
   canViewDepartments: boolean;
-  canViewUsers: boolean;
+  canViewUsers?: boolean;
 }) {
   const toast = useToast();
 
@@ -257,8 +261,11 @@ export function DoctorsManager({
                         </p>
                       ) : null}
                       {doctor.linkedAccount ? (
-                        <p className="mt-0.5 text-xs text-ink-400">
-                          {doctor.linkedAccount.email}
+                        <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-ink-600">
+                          <span className="inline-flex items-center rounded bg-gold-50 px-1.5 py-0.2 text-[10px] font-semibold text-gold-800 border border-gold-200/80">
+                            Staff
+                          </span>
+                          <span>{doctor.linkedAccount.email}</span>
                         </p>
                       ) : null}
                     </td>
@@ -361,6 +368,12 @@ export function DoctorsManager({
             setEditing(null);
             await load();
           }}
+          onDepartmentCreated={(newDept) => {
+            setDepartments((prev) => {
+              if (prev.some((d) => d.id === newDept.id)) return prev;
+              return [...prev, newDept];
+            });
+          }}
         />
       ) : null}
 
@@ -384,29 +397,52 @@ export function DoctorsManager({
 
 // ---------------------------------------------------------------------------
 
+const POPULAR_DEPARTMENTS: readonly string[] = [
+  "General Medicine",
+  "Cardiology",
+  "Paediatrics",
+  "Emergency",
+  "Orthopaedics",
+  "Dermatology",
+  "Neurology",
+  "General Surgery",
+  "Dentistry",
+  "ENT (Otolaryngology)",
+];
+
 function DoctorEditor({
   doctor,
   departments,
-  staff,
+  staff = [],
   currency,
   onClose,
   onSaved,
+  onDepartmentCreated,
 }: {
   doctor: Doctor | null;
   departments: Department[];
-  staff: StaffMember[];
+  staff?: StaffMember[];
   currency: Currency;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
+  onDepartmentCreated?: (department: Department) => void;
 }) {
   const toast = useToast();
   const editing = doctor !== null;
 
   const [displayName, setDisplayName] = useState(doctor?.displayName ?? "");
+  const [userId, setUserId] = useState(
+    doctor?.userId ?? (doctor?.linkedAccount?.id ?? ""),
+  );
   const [specialization, setSpecialization] = useState(
     doctor?.specialization ?? "",
   );
-  const [userId, setUserId] = useState(doctor?.userId ?? "");
+  const [deptList, setDeptList] = useState<Department[]>(departments);
+  const [newDeptInput, setNewDeptInput] = useState("");
+  const [creatingDept, setCreatingDept] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const deptInputRef = useRef<HTMLDivElement>(null);
+
   const [selectedDepartments, setSelectedDepartments] = useState<Set<string>>(
     new Set(doctor?.departments.map((department) => department.id) ?? []),
   );
@@ -420,6 +456,24 @@ function DoctorEditor({
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
+  useEffect(() => {
+    setDeptList(departments);
+  }, [departments]);
+
+  useEffect(() => {
+    if (!suggestionsOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        deptInputRef.current &&
+        !deptInputRef.current.contains(e.target as Node)
+      ) {
+        setSuggestionsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [suggestionsOpen]);
+
   function toggleDepartment(id: string) {
     setSelectedDepartments((current) => {
       const next = new Set(current);
@@ -429,13 +483,150 @@ function DoctorEditor({
     });
   }
 
+  async function handleAddDepartment(nameToAdd?: string) {
+    const rawName = (nameToAdd ?? newDeptInput).trim();
+    if (!rawName) return;
+
+    // Check if department already exists in list (case-insensitive)
+    const existing = deptList.find(
+      (d) => d.name.toLowerCase() === rawName.toLowerCase(),
+    );
+
+    if (existing) {
+      setSelectedDepartments((current) => new Set([...current, existing.id]));
+      setNewDeptInput("");
+      setSuggestionsOpen(false);
+      return;
+    }
+
+    setCreatingDept(true);
+    try {
+      const created = await api.post<Department>("/api/departments", {
+        name: rawName,
+        status: "active",
+      });
+      setDeptList((prev) => [...prev, created]);
+      onDepartmentCreated?.(created);
+      setSelectedDepartments((current) => new Set([...current, created.id]));
+      setNewDeptInput("");
+      setSuggestionsOpen(false);
+      toast.success(`Department "${created.name}" created.`);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiClientError ? err.message : "Could not create department.",
+      );
+    } finally {
+      setCreatingDept(false);
+    }
+  }
+
+  const query = newDeptInput.trim().toLowerCase();
+  const allAvailableNames = Array.from(
+    new Set([
+      ...deptList.map((d) => d.name),
+      ...DEPARTMENT_SUGGESTIONS,
+    ]),
+  );
+  const matchingSuggestions = query
+    ? allAvailableNames
+        .filter((name) => name.toLowerCase().includes(query))
+        .slice(0, 8)
+    : [];
+
+  const emailOptions = staff.map((member) => ({
+    value: member.id,
+    label: `${member.email} (${member.name})`,
+  }));
+
+  if (
+    doctor?.linkedAccount &&
+    !emailOptions.some((opt) => opt.value === doctor.linkedAccount?.id)
+  ) {
+    emailOptions.unshift({
+      value: doctor.linkedAccount.id,
+      label: `${doctor.linkedAccount.email} (${doctor.linkedAccount.name})`,
+    });
+  }
+
+  function clearError(field: string) {
+    if (fieldErrors[field]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  }
+
+  function validate(): boolean {
+    const errors: Record<string, string> = {};
+
+    const trimmedName = displayName.trim();
+    if (!trimmedName) {
+      errors.displayName = "Display name is required.";
+    } else if (trimmedName.length < 2) {
+      errors.displayName = "Doctor name must be at least 2 characters.";
+    } else if (trimmedName.length > 150) {
+      errors.displayName = "Doctor name cannot exceed 150 characters.";
+    }
+
+    if (!userId) {
+      errors.userId = "Please select an email for the doctor.";
+    }
+
+    const trimmedSpec = specialization.trim();
+    if (!trimmedSpec) {
+      errors.specialization = "Specialisation is required.";
+    } else if (trimmedSpec.length > 150) {
+      errors.specialization = "Specialisation cannot exceed 150 characters.";
+    }
+
+    if (selectedDepartments.size === 0) {
+      errors.departments = "Please select at least one department.";
+    }
+
+    const feeStr = String(fee).trim();
+    if (feeStr === "") {
+      errors.consultationFee = "Consultation fee is required.";
+    } else {
+      const numFee = Number(feeStr);
+      if (isNaN(numFee)) {
+        errors.consultationFee = "Consultation fee must be a valid number.";
+      } else if (numFee < 0) {
+        errors.consultationFee = "Consultation fee cannot be negative.";
+      } else if (numFee > 100_000_000) {
+        errors.consultationFee = "Consultation fee cannot exceed 100,000,000.";
+      }
+    }
+
+    if (!status) {
+      errors.status = "Status is required.";
+    }
+
+    for (const w of availability) {
+      if (w.startTime >= w.endTime) {
+        errors.availability = "End time must be after start time for all availability windows.";
+        break;
+      }
+    }
+
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      toast.error("Please fill in all required fields correctly.");
+      return false;
+    }
+    return true;
+  }
+
   async function save() {
+    if (!validate()) return;
+
     setSaving(true);
     setFieldErrors({});
 
     const payload = {
-      displayName,
-      specialization,
+      displayName: displayName.trim(),
+      specialization: specialization.trim(),
       userId: userId || null,
       departmentIds: [...selectedDepartments],
       consultationFee: Number(fee) || 0,
@@ -478,7 +669,7 @@ function DoctorEditor({
           <Button
             onClick={() => void save()}
             loading={saving}
-            disabled={!displayName.trim()}
+            disabled={saving}
           >
             {editing ? "Save changes" : "Add doctor"}
           </Button>
@@ -489,60 +680,255 @@ function DoctorEditor({
         <TextField
           label="Display name"
           value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
+          onChange={(event) => {
+            setDisplayName(event.target.value);
+            clearError("displayName");
+          }}
           error={fieldErrors.displayName}
           placeholder="Dr. Jane Okafor"
           required
         />
 
+        <SelectField
+          label="Email"
+          value={userId}
+          onChange={(event) => {
+            const selectedId = event.target.value;
+            setUserId(selectedId);
+            clearError("userId");
+            clearError("email");
+            if (selectedId) {
+              const selectedMember =
+                staff.find((m) => m.id === selectedId) ||
+                (doctor?.linkedAccount?.id === selectedId
+                  ? doctor.linkedAccount
+                  : null);
+              if (selectedMember && !displayName.trim()) {
+                setDisplayName(selectedMember.name);
+                clearError("displayName");
+              }
+            }
+          }}
+          options={[
+            { value: "", label: "Select doctor email" },
+            ...emailOptions,
+          ]}
+          error={fieldErrors.userId || fieldErrors.email}
+          required
+          hint="Select the staff account email for this doctor."
+        />
+
         <ComboField
           label="Specialisation"
           value={specialization}
-          onValueChange={setSpecialization}
+          onValueChange={(val) => {
+            setSpecialization(val);
+            clearError("specialization");
+          }}
           error={fieldErrors.specialization}
           placeholder="e.g. Cardiologist"
+          required
           suggestions={SPECIALISATION_SUGGESTIONS}
         />
 
-        <SelectField
-          label="Linked staff account"
-          value={userId}
-          onChange={(event) => setUserId(event.target.value)}
-          error={fieldErrors.userId}
-          options={[
-            { value: "", label: "No linked account" },
-            ...staff.map((member) => ({
-              value: member.id,
-              label: `${member.name} (${member.email})`,
-            })),
-          ]}
-          hint="Optional. Link a login so this doctor can sign in."
-        />
-
         <div>
-          <p className="mb-2 text-sm font-medium text-ink-800">Departments</p>
-          {departments.length === 0 ? (
-            <p className="text-xs text-ink-500">
-              No departments available to assign.
-            </p>
+          <div className="mb-2 flex items-center justify-between">
+            <label className="text-sm font-medium text-ink-800">
+              Departments
+              <span className="ml-0.5 text-red-600" aria-hidden="true">
+                *
+              </span>
+            </label>
+            {selectedDepartments.size > 0 ? (
+              <span className="text-xs font-semibold text-gold-700">
+                {selectedDepartments.size} selected
+              </span>
+            ) : null}
+          </div>
+
+          {/* Quick add / search input with suggestions */}
+          <div ref={deptInputRef} className="relative mb-2.5">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={newDeptInput}
+                  onChange={(e) => {
+                    setNewDeptInput(e.target.value);
+                    setSuggestionsOpen(true);
+                  }}
+                  onFocus={() => setSuggestionsOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleAddDepartment();
+                    } else if (e.key === "Escape") {
+                      setSuggestionsOpen(false);
+                    }
+                  }}
+                  placeholder="Add or search department (e.g. Cardiology)..."
+                  className={cn(
+                    "h-9 w-full rounded-lg border bg-white px-3 text-sm placeholder:text-ink-400 focus:outline-none",
+                    fieldErrors.departments || fieldErrors.departmentIds
+                      ? "border-red-400 focus:border-red-500"
+                      : "border-ink-200 hover:border-ink-300 focus:border-gold-500",
+                  )}
+                />
+
+                {suggestionsOpen && matchingSuggestions.length > 0 ? (
+                  <ul className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-lg border border-ink-200 bg-white py-1 shadow-lg">
+                    {matchingSuggestions.map((suggestion) => {
+                      const isExisting = deptList.some(
+                        (d) =>
+                          d.name.toLowerCase() === suggestion.toLowerCase(),
+                      );
+                      const isAlreadySelected = deptList.some(
+                        (d) =>
+                          d.name.toLowerCase() === suggestion.toLowerCase() &&
+                          selectedDepartments.has(d.id),
+                      );
+                      return (
+                        <li key={suggestion}>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              void handleAddDepartment(suggestion);
+                            }}
+                            className={cn(
+                              "flex w-full items-center justify-between px-3 py-1.5 text-left text-sm transition-colors",
+                              isAlreadySelected
+                                ? "bg-gold-50/70 text-gold-900 font-medium"
+                                : "text-ink-700 hover:bg-gold-50 hover:text-gold-900",
+                            )}
+                          >
+                            <span>{suggestion}</span>
+                            <span className="text-[11px] text-ink-400">
+                              {isAlreadySelected
+                                ? "selected"
+                                : isExisting
+                                  ? "select"
+                                  : "+ add new"}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </div>
+
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={!newDeptInput.trim() || creatingDept}
+                loading={creatingDept}
+                onClick={() => void handleAddDepartment()}
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+
+          {/* Department List in Highlights */}
+          {deptList.length === 0 ? (
+            <div
+              className={cn(
+                "rounded-lg border border-dashed p-3",
+                fieldErrors.departments || fieldErrors.departmentIds
+                  ? "border-red-300 bg-red-50/30"
+                  : "border-ink-200 bg-ink-50/50",
+              )}
+            >
+              <p className="mb-2 text-xs font-medium text-ink-600">
+                Quick-add popular departments:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {POPULAR_DEPARTMENTS.map((deptName) => (
+                  <button
+                    key={deptName}
+                    type="button"
+                    disabled={creatingDept}
+                    onClick={() => {
+                      void handleAddDepartment(deptName);
+                      clearError("departments");
+                      clearError("departmentIds");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 py-1 text-xs font-medium text-ink-700 hover:border-gold-400 hover:bg-gold-50 hover:text-gold-900 transition-colors shadow-2xs"
+                  >
+                    <span className="text-gold-600 font-bold">+</span>
+                    <span>{deptName}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : (
-            <div className="grid gap-1.5 sm:grid-cols-2">
-              {departments.map((department) => (
-                <label
-                  key={department.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-700 hover:bg-ink-50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedDepartments.has(department.id)}
-                    onChange={() => toggleDepartment(department.id)}
-                    className="h-4 w-4 rounded border-ink-300 accent-gold-500"
-                  />
-                  {department.name}
-                </label>
-              ))}
+            <div className="flex flex-col gap-2">
+              <div
+                className={cn(
+                  "flex flex-wrap gap-1.5 max-h-40 overflow-y-auto rounded-lg border p-2",
+                  fieldErrors.departments || fieldErrors.departmentIds
+                    ? "border-red-300 bg-red-50/30"
+                    : "border-ink-200 bg-ink-50/40",
+                )}
+              >
+                {deptList.map((department) => {
+                  const isSelected = selectedDepartments.has(department.id);
+                  return (
+                    <button
+                      key={department.id}
+                      type="button"
+                      onClick={() => {
+                        toggleDepartment(department.id);
+                        clearError("departments");
+                        clearError("departmentIds");
+                      }}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-all cursor-pointer",
+                        isSelected
+                          ? "border border-gold-400 bg-gold-100 text-gold-950 font-semibold shadow-xs"
+                          : "border border-ink-200 bg-white text-ink-600 hover:border-ink-300 hover:bg-ink-50",
+                      )}
+                    >
+                      {isSelected ? (
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="text-gold-700 shrink-0"
+                        >
+                          <path d="M20 6L9 17l-5-5" />
+                        </svg>
+                      ) : (
+                        <span className="text-ink-400 font-bold text-xs shrink-0">+</span>
+                      )}
+                      <span>{department.name}</span>
+                      {isSelected ? (
+                        <span className="text-gold-600 hover:text-gold-950 ml-0.5 text-xs font-bold leading-none">
+                          &times;
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-ink-500">
+                Click a department to toggle. Highlighted items are assigned to this doctor.
+              </p>
             </div>
           )}
+
+          {fieldErrors.departments || fieldErrors.departmentIds ? (
+            <p role="alert" className="mt-1 text-xs font-medium text-red-600">
+              {fieldErrors.departments || fieldErrors.departmentIds}
+            </p>
+          ) : null}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -552,20 +938,27 @@ function DoctorEditor({
             min={0}
             step={currency.decimals === 0 ? 1 : 10 ** -currency.decimals}
             value={fee}
-            onChange={(event) => setFee(event.target.value)}
+            onChange={(event) => {
+              setFee(event.target.value);
+              clearError("consultationFee");
+            }}
             error={fieldErrors.consultationFee}
+            required
           />
           <SelectField
             label="Status"
             value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as "active" | "inactive")
-            }
+            onChange={(event) => {
+              setStatus(event.target.value as "active" | "inactive");
+              clearError("status");
+            }}
             options={[
               { value: "active", label: "Active" },
               { value: "inactive", label: "Inactive" },
             ]}
             hint="Inactive doctors cannot be booked."
+            required
+            error={fieldErrors.status}
           />
         </div>
 
@@ -576,17 +969,24 @@ function DoctorEditor({
             </p>
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
                 setAvailability((windows) => [
                   ...windows,
                   { dayOfWeek: 1, startTime: "09:00", endTime: "17:00" },
-                ])
-              }
+                ]);
+                clearError("availability");
+              }}
               className="text-xs font-medium text-gold-700 hover:text-gold-800"
             >
               Add window
             </button>
           </div>
+
+          {fieldErrors.availability ? (
+            <p role="alert" className="mb-2 text-xs font-medium text-red-600">
+              {fieldErrors.availability}
+            </p>
+          ) : null}
 
           {availability.length === 0 ? (
             <p className="text-xs text-ink-500">

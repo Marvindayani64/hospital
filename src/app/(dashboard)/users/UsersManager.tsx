@@ -5,7 +5,7 @@ import { Card, CardBody } from "@/components/ui/Card";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
-import { SelectField, TextField } from "@/components/ui/Field";
+import { EmailField, SelectField, TextField } from "@/components/ui/Field";
 import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/States";
 import { useToast } from "@/components/ui/Toast";
 import { ApiClientError, api } from "@/lib/client/api";
@@ -584,9 +584,8 @@ function MemberEditor({
           required
         />
 
-        <TextField
+        <EmailField
           label="Email"
-          type="email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           error={fieldErrors.email}

@@ -121,7 +121,7 @@ export function AppShell({
       >
         <div
           className={cn(
-            "flex h-16 items-center gap-2.5 border-b border-ink-200",
+            "relative flex h-16 items-center gap-2.5 border-b border-ink-200",
             collapsed ? "px-4 lg:justify-center lg:px-0" : "px-5",
           )}
         >
@@ -133,18 +133,27 @@ export function AppShell({
             <p className="truncate text-xs text-ink-500">{workspace.subtitle}</p>
           </div>
 
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-pressed={collapsed}
-            className={cn(
-              "ml-auto hidden rounded-lg p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700 lg:block",
-              collapsed && "lg:hidden",
-            )}
-          >
-            <PanelGlyph />
-          </button>
+          {collapsed ? (
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+              className="absolute -right-3 top-1/2 -translate-y-1/2 z-50 hidden h-6 w-6 items-center justify-center rounded-full border border-ink-200 bg-white text-ink-500 shadow-xs hover:bg-ink-100 hover:text-ink-900 transition-colors lg:flex"
+            >
+              <ChevronRightGlyph />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Collapse sidebar"
+              title="Collapse sidebar"
+              className="ml-auto hidden rounded-lg p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700 lg:block"
+            >
+              <PanelGlyph />
+            </button>
+          )}
         </div>
 
         <nav className="flex-1 overflow-y-auto p-3" aria-label="Main">
@@ -200,17 +209,6 @@ export function AppShell({
         </nav>
 
         <div className="border-t border-ink-200 p-3">
-          {collapsed ? (
-            <button
-              type="button"
-              onClick={toggleCollapsed}
-              aria-label="Expand sidebar"
-              className="mb-2 hidden w-full justify-center rounded-lg p-2 text-ink-400 hover:bg-ink-100 hover:text-ink-700 lg:flex"
-            >
-              <PanelGlyph />
-            </button>
-          ) : null}
-
           <div
             className={cn(
               "rounded-lg bg-ink-50 px-3 py-2.5",
@@ -297,6 +295,27 @@ export function AppShell({
         <main className="p-4 sm:p-6">{children}</main>
       </div>
     </div>
+  );
+}
+
+function ChevronRightGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        d="M9 18l6-6-6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

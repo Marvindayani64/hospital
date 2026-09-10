@@ -1,6 +1,11 @@
 import { z } from "zod";
-import { emailSchema } from "@/schemas/auth.schema";
-import { objectIdSchema, paginationSchema, searchSchema } from "@/schemas/common";
+import {
+  emailSchema,
+  objectIdSchema,
+  optionalEmailSchema,
+  paginationSchema,
+  searchSchema,
+} from "@/schemas/common";
 
 /**
  * Note what is ABSENT from every schema here: `hospitalId`, `isSuperAdmin`,
@@ -29,7 +34,7 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
 export const updateUserSchema = z
   .object({
     name: z.string().trim().min(2).max(150).optional(),
-    email: emailSchema.optional(),
+    email: optionalEmailSchema.optional(),
     roleId: objectIdSchema.optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {

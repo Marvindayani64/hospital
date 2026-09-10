@@ -247,7 +247,13 @@ async function main(): Promise<void> {
 
   const futureDob = await call("/api/patients", {
     method: "POST",
-    body: { firstName: "Future", lastName: "Person", phone: "+919876500002", dateOfBirth: "2099-01-01" },
+    body: {
+      firstName: "Future",
+      lastName: "Person",
+      phone: "+919876500002",
+      email: "future@example.test",
+      dateOfBirth: "2099-01-01",
+    },
     jar: alpha.jar,
   });
   check(
@@ -269,6 +275,7 @@ async function main(): Promise<void> {
           firstName: `Concurrent${index}`,
           lastName: `Test${stamp}`,
           phone: `+91987651${String(index).padStart(4, "0")}`,
+          email: `concurrent${index}.${stamp}@example.test`,
         },
         jar: alpha.jar,
       }),
@@ -293,7 +300,12 @@ async function main(): Promise<void> {
   // The same number may legitimately exist at another hospital.
   const betaFirst = await call("/api/patients", {
     method: "POST",
-    body: { firstName: "Grace", lastName: "Hopper", phone: "+919876500003" },
+    body: {
+      firstName: "Grace",
+      lastName: "Hopper",
+      phone: "+919876500003",
+      email: "grace@example.test",
+    },
     jar: beta.jar,
   });
   check(
@@ -930,7 +942,12 @@ async function main(): Promise<void> {
 
   const freshPatient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: "No", lastName: "Bookings", phone: "+919876509999" },
+    body: {
+      firstName: "No",
+      lastName: "Bookings",
+      phone: "+919876509999",
+      email: "nobookings@example.test",
+    },
     jar: alpha.jar,
   });
   const deleteFresh = await call(`/api/patients/${freshPatient.json.data.id}`, {

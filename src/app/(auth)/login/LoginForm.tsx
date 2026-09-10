@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import { PasswordField, TextField } from "@/components/ui/Field";
+import { EmailField, PasswordField } from "@/components/ui/Field";
 import { ApiClientError, api } from "@/lib/client/api";
 
 type LoginResponse = {
@@ -130,9 +130,8 @@ export function LoginForm() {
         </div>
       ) : null}
 
-      <TextField
+      <EmailField
         label="Email"
-        type="email"
         name="email"
         autoComplete="username"
         placeholder="you@hospital.com"
