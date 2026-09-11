@@ -113,6 +113,56 @@ async function signIn(email: string, password: string): Promise<Jar> {
   return jar;
 }
 
+/**
+ * The Hospital Admin role is read-only over operational records by default —
+ * the front desk books patients in, a doctor writes the consultation, an
+ * accountant raises the invoice (see lib/rbac/default-roles.ts).
+ *
+ * These suites use the admin account as a fixture to set that data up, so they
+ * grant the operational permissions back first, exactly as a hospital would
+ * from the Roles screen. The read-only DEFAULT is asserted in verify-admin
+ * rather than here.
+ */
+async function grantOperationalPermissions(jar: Jar): Promise<void> {
+  const roles = await call("/api/roles?pageSize=100", { jar });
+  const admin = (roles.json?.data?.items as any[])?.find(
+    (role) => role.key === "hospital_admin",
+  );
+  if (!admin) throw new Error("No hospital_admin role to grant from.");
+
+  const granted = await call(`/api/roles/${admin.id}`, {
+    method: "PATCH",
+    body: {
+      permissions: [
+        ...new Set([
+          ...(admin.permissions as string[]),
+          "patient.create",
+          "patient.update",
+          "patient.delete",
+          "appointment.create",
+          "appointment.update",
+          "appointment.cancel",
+          "visit.create",
+          "visit.update",
+          "prescription.create",
+          "prescription.dispense",
+          "invoice.create",
+          "invoice.update",
+          "invoice.delete",
+          "payment.create",
+        ]),
+      ],
+    },
+    jar,
+  });
+
+  if (granted.status !== 200) {
+    throw new Error(
+      `Could not grant operational permissions: ${granted.status} ${JSON.stringify(granted.json?.error ?? "")}`,
+    );
+  }
+}
+
 const TODAY = new Date().toISOString().slice(0, 10);
 const MONTH_START = `${TODAY.slice(0, 7)}-01`;
 
@@ -160,6 +210,9 @@ async function buildTenant(
     body: { currentPassword: temp, newPassword: password, confirmPassword: password },
     jar,
   });
+
+  // Fixture setup runs as the admin, which is read-only by default.
+  await grantOperationalPermissions(jar);
 
   const department = await call("/api/departments", {
     method: "POST",
@@ -1082,6 +1135,142 @@ async function main(): Promise<void> {
         (frontDeskList.json?.data?.items as any[])?.map((a) => a.doctor?.id),
       ).size,
     ),
+  );
+
+  // -------------------------------------------------------------------------
+  section("The Hospital Admin runs the hospital, but does not work in it");
+
+  /**
+   * A fresh hospital, untouched by the fixture grant above, so this sees the
+   * seeded Hospital Admin role exactly as a real hospital gets it.
+   *
+   * The admin panel reports on the hospital: it reads every clinical and
+   * financial record and configures the practice, but the records themselves
+   * are entered by the people who do the work.
+   */
+  const freshEmail = `admin.fresh.${stamp}@example.test`;
+  const fresh = await call("/api/super-admin/hospitals", {
+    method: "POST",
+    body: {
+      name: `Fresh Admin Clinic ${stamp}`,
+      type: "clinic",
+      email: `contact.fresh.${stamp}@example.test`,
+      phone: "+15550100",
+      status: "active",
+      currency: "USD",
+      adminName: "Fresh Admin",
+      adminEmail: freshEmail,
+    },
+    jar: superJar,
+  });
+  const freshTemp = fresh.json.data.temporaryPassword as string;
+  const freshJar = await signIn(freshEmail, freshTemp);
+  await call("/api/auth/change-password", {
+    method: "POST",
+    body: {
+      currentPassword: freshTemp,
+      newPassword: "FreshAdmin!2024",
+      confirmPassword: "FreshAdmin!2024",
+    },
+    jar: freshJar,
+  });
+
+  const freshMe = await call("/api/auth/me", { jar: freshJar });
+  const freshPerms = (freshMe.json.data.user.permissions as string[]) ?? [];
+
+  for (const [what, permission] of [
+    ["register a patient", "patient.create"],
+    ["book an appointment", "appointment.create"],
+    ["record a visit", "visit.create"],
+    ["write a prescription", "prescription.create"],
+    ["dispense a prescription", "prescription.dispense"],
+    ["raise an invoice", "invoice.create"],
+    ["take a payment", "payment.create"],
+  ] as const) {
+    check(
+      `Admin CANNOT ${what}`,
+      !freshPerms.includes(permission),
+      `holds ${permission}`,
+    );
+  }
+
+  for (const [what, permission] of [
+    ["read patients", "patient.view"],
+    ["read appointments", "appointment.view"],
+    ["read visits", "visit.view"],
+    ["read prescriptions", "prescription.view"],
+    ["read invoices", "invoice.view"],
+    ["read payments", "payment.view"],
+  ] as const) {
+    check(
+      `Admin CAN still ${what}`,
+      freshPerms.includes(permission),
+      `missing ${permission}`,
+    );
+  }
+
+  // Running the hospital is untouched.
+  for (const permission of [
+    "doctor.create",
+    "treatment.create",
+    "department.create",
+    "user.create",
+    "role.update",
+    "hospital.settings.update",
+    "audit.view",
+  ]) {
+    check(
+      `Admin still configures the hospital (${permission})`,
+      freshPerms.includes(permission),
+    );
+  }
+
+  /**
+   * The permission is what stops it, not a hidden button — the endpoint
+   * refuses the write even when called directly.
+   */
+  const adminRegisters = await call("/api/patients", {
+    method: "POST",
+    body: {
+      firstName: "Should",
+      lastName: "Fail",
+      phone: "+919876500777",
+      email: `shouldfail.${stamp}@example.test`,
+    },
+    jar: freshJar,
+  });
+  check(
+    "Registering a patient as the admin is refused by the API",
+    adminRegisters.status === 403,
+    `got ${adminRegisters.status}`,
+  );
+
+  const adminReads = await call("/api/patients", { jar: freshJar });
+  check(
+    "But the admin can still read the patient list",
+    adminReads.status === 200,
+    `got ${adminReads.status}`,
+  );
+
+  /**
+   * The restriction is a default, not a cage: the admin owns the Roles screen
+   * and can grant the work back when a hospital wants it that way.
+   */
+  await grantOperationalPermissions(freshJar);
+  const afterGrant = await call("/api/patients", {
+    method: "POST",
+    body: {
+      firstName: "Now",
+      lastName: "Allowed",
+      phone: "+919876500778",
+      email: `nowallowed.${stamp}@example.test`,
+    },
+    jar: freshJar,
+  });
+  check(
+    "An admin who grants themselves the permission can then register",
+    afterGrant.status === 201,
+    `got ${afterGrant.status}`,
   );
 
   // -------------------------------------------------------------------------

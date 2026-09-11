@@ -90,6 +90,13 @@ export function AppointmentsManager({
 }) {
   const toast = useToast();
 
+  /**
+   * Whether this viewer has any action at all on a booking. False for a
+   * read-only role, and the Actions column is dropped rather than rendered
+   * empty for every row.
+   */
+  const showActions = canUpdate || canCancel || canCreateVisits;
+
   const [data, setData] = useState<Paginated<Appointment> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -413,9 +420,14 @@ export function AppointmentsManager({
                   <th scope="col" className="px-5 py-2.5 font-semibold">Doctor</th>
                   <th scope="col" className="px-5 py-2.5 font-semibold">Service</th>
                   <th scope="col" className="px-5 py-2.5 font-semibold">Status</th>
-                  <th scope="col" className="px-5 py-2.5 text-right font-semibold">
-                    Actions
-                  </th>
+                  {/* Every control in this column is a write. A reader — the
+                      Hospital Admin, say — would get an empty column and a
+                      heading promising something that never appears. */}
+                  {showActions ? (
+                    <th scope="col" className="px-5 py-2.5 text-right font-semibold">
+                      Actions
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
@@ -465,6 +477,7 @@ export function AppointmentsManager({
                           </span>
                         </Badge>
                       </td>
+                      {showActions ? (
                       <td className="px-5 py-3">
                         <div className="flex flex-wrap justify-end gap-1.5">
                           {canUpdate && nextStatuses.length > 0 ? (
@@ -523,6 +536,7 @@ export function AppointmentsManager({
                           ) : null}
                         </div>
                       </td>
+                      ) : null}
                     </tr>
                   );
                 })}
