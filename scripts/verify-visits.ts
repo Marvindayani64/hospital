@@ -112,6 +112,56 @@ async function signIn(email: string, password: string): Promise<Jar> {
   return jar;
 }
 
+/**
+ * The Hospital Admin role is read-only over operational records by default —
+ * the front desk books patients in, a doctor writes the consultation, an
+ * accountant raises the invoice (see lib/rbac/default-roles.ts).
+ *
+ * These suites use the admin account as a fixture to set that data up, so they
+ * grant the operational permissions back first, exactly as a hospital would
+ * from the Roles screen. The read-only DEFAULT is asserted in verify-admin
+ * rather than here.
+ */
+async function grantOperationalPermissions(jar: Jar): Promise<void> {
+  const roles = await call("/api/roles?pageSize=100", { jar });
+  const admin = (roles.json?.data?.items as any[])?.find(
+    (role) => role.key === "hospital_admin",
+  );
+  if (!admin) throw new Error("No hospital_admin role to grant from.");
+
+  const granted = await call(`/api/roles/${admin.id}`, {
+    method: "PATCH",
+    body: {
+      permissions: [
+        ...new Set([
+          ...(admin.permissions as string[]),
+          "patient.create",
+          "patient.update",
+          "patient.delete",
+          "appointment.create",
+          "appointment.update",
+          "appointment.cancel",
+          "visit.create",
+          "visit.update",
+          "prescription.create",
+          "prescription.dispense",
+          "invoice.create",
+          "invoice.update",
+          "invoice.delete",
+          "payment.create",
+        ]),
+      ],
+    },
+    jar,
+  });
+
+  if (granted.status !== 200) {
+    throw new Error(
+      `Could not grant operational permissions: ${granted.status} ${JSON.stringify(granted.json?.error ?? "")}`,
+    );
+  }
+}
+
 function futureDate(daysAhead: number): string {
   const date = new Date();
   date.setDate(date.getDate() + daysAhead);
@@ -162,6 +212,9 @@ async function buildTenant(
     body: { currentPassword: temp, newPassword: password, confirmPassword: password },
     jar,
   });
+
+  // Fixture setup runs as the admin, which is read-only by default.
+  await grantOperationalPermissions(jar);
 
   const department = await call("/api/departments", {
     method: "POST",

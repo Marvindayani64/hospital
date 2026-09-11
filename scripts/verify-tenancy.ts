@@ -221,20 +221,49 @@ async function main(): Promise<void> {
     (r) => r.key === "receptionist",
   );
   /**
-   * The catalogue size is read from the API rather than hardcoded, so adding a
-   * permission in a later phase does not break this assertion — what matters is
-   * that Hospital Admin holds ALL of them, not how many there happen to be.
+   * The catalogue is read from the API rather than hardcoded, so adding a
+   * permission in a later phase does not break these assertions.
+   *
+   * Hospital Admin deliberately does NOT hold all of it: the admin panel runs
+   * the hospital and reports on it, while the records are entered by the people
+   * who do the work (see lib/rbac/default-roles.ts). What must hold is the
+   * shape of that split.
    */
   const catalogue = await call("/api/permissions", { jar: alpha.adminJar });
   const catalogueSize = (catalogue.json.data.groups as any[]).reduce(
     (total, group) => total + group.permissions.length,
     0,
   );
+  const adminPermissions = alphaAdminRole.permissions as string[];
 
   check(
-    "Hospital Admin role holds every permission in the catalogue",
-    catalogueSize > 0 && alphaAdminRole.permissions.length === catalogueSize,
-    `role has ${alphaAdminRole.permissions.length}, catalogue has ${catalogueSize}`,
+    "Hospital Admin holds a subset of the catalogue, not all of it",
+    catalogueSize > 0 && adminPermissions.length < catalogueSize,
+    `role has ${adminPermissions.length}, catalogue has ${catalogueSize}`,
+  );
+  check(
+    "Hospital Admin holds every administrative permission",
+    [
+      "user.create",
+      "role.create",
+      "role.update",
+      "hospital.settings.update",
+      "audit.view",
+      "doctor.create",
+      "treatment.create",
+      "department.create",
+    ].every((permission) => adminPermissions.includes(permission)),
+    adminPermissions.join(", "),
+  );
+  check(
+    "Hospital Admin reads operational records but does not write them",
+    ["patient.view", "invoice.view", "prescription.view"].every((p) =>
+      adminPermissions.includes(p),
+    ) &&
+      ["patient.create", "invoice.create", "prescription.create"].every(
+        (p) => !adminPermissions.includes(p),
+      ),
+    adminPermissions.join(", "),
   );
   check(
     "Receptionist role has a restricted subset",
