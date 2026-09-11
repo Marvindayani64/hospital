@@ -374,13 +374,6 @@ export function BillingManager({
                   ? "Try adjusting your search or filter."
                   : "Raise an invoice from your treatment catalogue."
               }
-              action={
-                canCreate && !debouncedSearch && !statusFilter ? (
-                  <Button size="sm" onClick={() => setComposing("new")}>
-                    New invoice
-                  </Button>
-                ) : undefined
-              }
             />
           ) : (
             <div className="overflow-x-auto">
