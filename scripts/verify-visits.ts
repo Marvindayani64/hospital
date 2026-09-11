@@ -188,7 +188,12 @@ async function buildTenant(
   });
   const patient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: label, lastName: "Patient", phone: "+919876500200" },
+    body: {
+      firstName: label,
+      lastName: "Patient",
+      phone: "+919876500200",
+      email: `patient.${label.toLowerCase()}.${stamp}@visits.test`,
+    },
     jar,
   });
 
@@ -332,7 +337,12 @@ async function main(): Promise<void> {
   // Another patient's appointment must not accept this patient's visit.
   const otherPatient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: "Other", lastName: "Person", phone: "+919876500999" },
+    body: {
+      firstName: "Other",
+      lastName: "Person",
+      phone: "+919876500999",
+      email: `other.person.${stamp}@visits.test`,
+    },
     jar: alpha.jar,
   });
   const mismatchedAppointment = await call("/api/visits", {

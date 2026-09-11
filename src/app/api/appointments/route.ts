@@ -9,6 +9,7 @@ import {
   createAppointment,
   listAppointments,
 } from "@/services/appointment.service";
+import { ownDoctorId } from "@/lib/rbac/doctor-scope";
 import { requestMeta } from "@/utils/request";
 
 export const runtime = "nodejs";
@@ -30,7 +31,16 @@ export const GET = route(async (req: NextRequest) => {
     to: searchParams.get("to") ?? undefined,
   });
 
-  return ok(await listAppointments(user.hospitalId, params));
+  /**
+   * A clinician sees their own bookings only. Resolved here from the session
+   * rather than trusted from the query string, so it cannot be lifted by
+   * editing the URL.
+   */
+  const viewerDoctorId = await ownDoctorId(user.userId, user.hospitalId);
+
+  return ok(
+    await listAppointments(user.hospitalId, { ...params, viewerDoctorId }),
+  );
 });
 
 /**

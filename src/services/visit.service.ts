@@ -179,6 +179,11 @@ export async function listVisits(
     from?: string;
     to?: string;
     followUpBefore?: string;
+    /**
+     * The caller's own doctor profile, when they are a clinician. Narrows the
+     * list to their own consultations — see lib/rbac/doctor-scope.ts.
+     */
+    viewerDoctorId?: string | null;
   },
 ): Promise<Paginated<VisitSummary>> {
   await connectToDatabase();
@@ -209,6 +214,9 @@ export async function listVisits(
           ],
         }
       : {}),
+    // Applied last so it overrides a caller-supplied `doctorId` — the same
+    // rule as the appointments list.
+    ...(params.viewerDoctorId ? { doctorId: params.viewerDoctorId } : {}),
   });
 
   const [visits, total] = await Promise.all([
