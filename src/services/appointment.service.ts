@@ -327,6 +327,11 @@ export async function listAppointments(
     departmentId?: string;
     from?: string;
     to?: string;
+    /**
+     * The caller's own doctor profile, when they are a clinician. Narrows the
+     * list to their own bookings — see lib/rbac/doctor-scope.ts.
+     */
+    viewerDoctorId?: string | null;
   },
 ): Promise<Paginated<AppointmentSummary>> {
   await connectToDatabase();
@@ -344,6 +349,12 @@ export async function listAppointments(
     ...(Object.keys(dateRange).length > 0
       ? { appointmentDate: mongoose.trusted(dateRange) }
       : {}),
+    /**
+     * Applied LAST so it overrides any `doctorId` the caller asked for. A
+     * clinician filtering by a colleague must still see only their own —
+     * otherwise the narrowing would be a UI default rather than a rule.
+     */
+    ...(params.viewerDoctorId ? { doctorId: params.viewerDoctorId } : {}),
   });
 
   const [appointments, total] = await Promise.all([

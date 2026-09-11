@@ -342,6 +342,155 @@ async function main(): Promise<void> {
   );
 
   // -------------------------------------------------------------------------
+  section("Linking a doctor profile to a staff account");
+
+  /**
+   * A doctor profile and a login are two records. Attaching one to the other is
+   * what lets that account act AS the clinician — it is how a doctor comes to
+   * be able to prescribe — and it is the write the Staff form performs when an
+   * admin picks an existing doctor by name.
+   */
+  const linkRoles = await call("/api/roles?pageSize=100", { jar: alpha.jar });
+  const doctorRoleId = (linkRoles.json.data.items as any[]).find(
+    (r) => r.key === "doctor",
+  )?.id as string;
+  check("The Doctor role carries its machine key", Boolean(doctorRoleId));
+
+  const clinicianEmail = `clinician.link.${stamp}@alpha.test`;
+  const clinician = await call("/api/users", {
+    method: "POST",
+    body: { name: "Dr. Alpha", email: clinicianEmail, roleId: doctorRoleId },
+    jar: alpha.jar,
+  });
+  check(
+    "Staff account created for the clinician",
+    clinician.status === 201,
+    `got ${clinician.status}`,
+  );
+  const clinicianUserId = clinician.json?.data?.member?.id as string;
+
+  const beforeLink = await call(`/api/doctors/${alpha.doctorId}`, {
+    jar: alpha.jar,
+  });
+  check(
+    "The doctor profile starts with no account attached",
+    beforeLink.json?.data?.userId === null,
+    String(beforeLink.json?.data?.userId),
+  );
+
+  const linked = await call(`/api/doctors/${alpha.doctorId}`, {
+    method: "PATCH",
+    body: { userId: clinicianUserId },
+    jar: alpha.jar,
+  });
+  check(
+    "The account can be attached to the profile",
+    linked.status === 200,
+    `got ${linked.status} ${JSON.stringify(linked.json?.error ?? "")}`,
+  );
+  check(
+    "The profile reports the linked account",
+    linked.json?.data?.linkedAccount?.email === clinicianEmail,
+    JSON.stringify(linked.json?.data?.linkedAccount),
+  );
+  /**
+   * `userId` is what the Staff form filters on to decide which profiles are
+   * still free. It used to be the populated account object stringified, which
+   * came back as the literal "[object Object]" — a truthy string that is not
+   * an id — so this asserts it is the real one.
+   */
+  check(
+    "userId is the account's id, not a stringified object",
+    linked.json?.data?.userId === clinicianUserId,
+    String(linked.json?.data?.userId),
+  );
+
+  const listed = await call("/api/doctors?pageSize=100", { jar: alpha.jar });
+  const listedSelf = (listed.json.data.items as any[]).find(
+    (d) => d.id === alpha.doctorId,
+  );
+  check(
+    "The doctors list reports the same id",
+    listedSelf?.userId === clinicianUserId,
+    String(listedSelf?.userId),
+  );
+  check(
+    "Unlinked profiles still report a null userId",
+    (listed.json.data.items as any[])
+      .filter((d) => d.id !== alpha.doctorId)
+      .every((d) => d.userId === null),
+    JSON.stringify(
+      (listed.json.data.items as any[]).map((d) => d.userId),
+    ),
+  );
+
+  /**
+   * `Doctor.userId` is unique per tenant, which is why the Staff form only ever
+   * offers profiles that have no account yet.
+   */
+  const secondProfile = await call("/api/doctors", {
+    method: "POST",
+    body: {
+      displayName: `Dr. Alpha Duplicate ${stamp}`,
+      departmentIds: [alpha.departmentId],
+    },
+    jar: alpha.jar,
+  });
+  const doubleLink = await call(
+    `/api/doctors/${secondProfile.json.data.id}`,
+    {
+      method: "PATCH",
+      body: { userId: clinicianUserId },
+      jar: alpha.jar,
+    },
+  );
+  check(
+    "One account cannot back two doctor profiles",
+    doubleLink.status === 409,
+    `got ${doubleLink.status}`,
+  );
+
+  /**
+   * The doctors form no longer carries an account field, so it saves without
+   * `userId`. An edit from that form must leave the link alone — sending the
+   * field as null would silently detach the doctor and take their ability to
+   * prescribe with it.
+   */
+  const editedWithoutUserId = await call(`/api/doctors/${alpha.doctorId}`, {
+    method: "PATCH",
+    body: {
+      displayName: "Dr. Alpha Renamed",
+      specialization: "Cardiology",
+      departmentIds: [alpha.departmentId],
+      consultationFee: 55,
+      availability: [],
+      status: "active",
+    },
+    jar: alpha.jar,
+  });
+  check(
+    "A doctor can be edited without naming an account",
+    editedWithoutUserId.status === 200,
+    `got ${editedWithoutUserId.status} ${JSON.stringify(editedWithoutUserId.json?.error ?? "")}`,
+  );
+  check(
+    "Editing without a userId field preserves the existing link",
+    editedWithoutUserId.json?.data?.userId === clinicianUserId,
+    String(editedWithoutUserId.json?.data?.userId),
+  );
+
+  const crossTenantLink = await call(`/api/doctors/${beta.doctorId}`, {
+    method: "PATCH",
+    body: { userId: clinicianUserId },
+    jar: beta.jar,
+  });
+  check(
+    "A doctor cannot be linked to another hospital's account",
+    crossTenantLink.status === 404,
+    `got ${crossTenantLink.status}`,
+  );
+
+  // -------------------------------------------------------------------------
   section("Appointment booking (Section 21)");
   const date = futureDate(3);
 

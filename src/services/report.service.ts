@@ -13,6 +13,7 @@ import {
 } from "@/models";
 import { RELEASING_STATUSES } from "@/models/Appointment";
 import { tenantScoped } from "@/lib/tenant/scope";
+import { ownDoctorId } from "@/lib/rbac/doctor-scope";
 import { DEFAULT_CURRENCY, formatMoney } from "@/utils/money";
 import { todayDateString } from "@/utils/time";
 import type { AuthContext } from "@/types";
@@ -77,6 +78,33 @@ function monthStartDate(): Date {
   return new Date(now.getFullYear(), now.getMonth(), 1);
 }
 
+/**
+ * The dashboard's half of the doctor-scoping rule.
+ *
+ * `ownDoctorId` (lib/rbac/doctor-scope.ts) is the single definition of who a
+ * clinician is; this only reshapes it for the two query forms used below —
+ * plain filters and aggregation `$match` stages, which need a real ObjectId.
+ * The appointments and visits listings apply the identical narrowing, so no
+ * screen can disagree with another about what a doctor may see.
+ */
+type DoctorScope = {
+  filter: Record<string, never> | { doctorId: string };
+  match: Record<string, never> | { doctorId: mongoose.Types.ObjectId };
+};
+
+async function doctorScopeFor(
+  user: AuthContext & { hospitalId: string },
+): Promise<DoctorScope> {
+  const id = await ownDoctorId(user.userId, user.hospitalId);
+
+  if (!id) return { filter: {}, match: {} };
+
+  return {
+    filter: { doctorId: id },
+    match: { doctorId: new mongoose.Types.ObjectId(id) },
+  };
+}
+
 export async function getDashboardStats(
   user: AuthContext & { hospitalId: string },
 ): Promise<DashboardStats> {
@@ -95,6 +123,9 @@ export async function getDashboardStats(
   const canTreatments = has(user, "treatment.view");
   const canVisits = has(user, "visit.view");
   const canBilling = has(user, "invoice.view");
+
+  // Narrows every appointment and visit figure below to this clinician's own.
+  const scope = await doctorScopeFor(user);
 
   const [
     patientTotal,
@@ -121,12 +152,13 @@ export async function getDashboardStats(
       : 0,
     canAppointments
       ? Appointment.countDocuments(
-          tenantScoped(hospitalId, { appointmentDate: today }),
+          tenantScoped(hospitalId, { ...scope.filter, appointmentDate: today }),
         )
       : 0,
     canAppointments
       ? Appointment.countDocuments(
           tenantScoped(hospitalId, {
+            ...scope.filter,
             appointmentDate: mongoose.trusted({ $gt: today }),
             status: mongoose.trusted({ $nin: [...RELEASING_STATUSES] }),
           }),
@@ -134,7 +166,13 @@ export async function getDashboardStats(
       : 0,
     canAppointments
       ? Appointment.aggregate<{ _id: string; count: number }>([
-          { $match: { hospitalId: tenantOid, appointmentDate: today } },
+          {
+            $match: {
+              hospitalId: tenantOid,
+              ...scope.match,
+              appointmentDate: today,
+            },
+          },
           { $group: { _id: "$status", count: { $sum: 1 } } },
         ])
       : [],
@@ -149,6 +187,7 @@ export async function getDashboardStats(
     canVisits
       ? Visit.countDocuments(
           tenantScoped(hospitalId, {
+            ...scope.filter,
             visitDate: mongoose.trusted({ $gte: monthStart() }),
           }),
         )
@@ -156,6 +195,7 @@ export async function getDashboardStats(
     canVisits
       ? Visit.countDocuments(
           tenantScoped(hospitalId, {
+            ...scope.filter,
             followUpDate: mongoose.trusted({ $ne: null, $lte: today }),
           }),
         )
@@ -168,7 +208,9 @@ export async function getDashboardStats(
           .lean()
       : [],
     canAppointments
-      ? Appointment.find(tenantScoped(hospitalId, { appointmentDate: today }))
+      ? Appointment.find(
+          tenantScoped(hospitalId, { ...scope.filter, appointmentDate: today }),
+        )
           .sort({ startMinutes: 1 })
           .limit(10)
           .populate("patientId", "firstName lastName")
@@ -416,6 +458,13 @@ export async function getDashboardInsights(
   const canPayments = has(user, "payment.view");
   const canUsers = has(user, "user.view");
 
+  /**
+   * The same narrowing the stats use. Applied here too so the two halves of the
+   * dashboard cannot contradict each other — "1 appointment today" beside an
+   * alert about twelve unconfirmed ones belonging to other doctors.
+   */
+  const scope = await doctorScopeFor(user);
+
   // Two adjacent seven-day windows, both inclusive of their first day.
   const currentFrom = addDays(today, -6);
   const previousFrom = addDays(today, -13);
@@ -477,6 +526,7 @@ export async function getDashboardInsights(
           {
             $match: {
               hospitalId: tenantOid,
+              ...scope.match,
               appointmentDate: { $gte: previousFrom, $lte: today },
             },
           },
@@ -494,6 +544,7 @@ export async function getDashboardInsights(
           {
             $match: {
               hospitalId: tenantOid,
+              ...scope.match,
               visitDate: { $gte: previousFrom, $lte: today },
             },
           },
@@ -545,6 +596,7 @@ export async function getDashboardInsights(
           {
             $match: {
               hospitalId: tenantOid,
+              ...scope.match,
               appointmentDate: { $gte: flowDays[0]!, $lte: today },
               status: { $nin: [...RELEASING_STATUSES] },
             },
@@ -557,6 +609,7 @@ export async function getDashboardInsights(
           {
             $match: {
               hospitalId: tenantOid,
+              ...scope.match,
               visitDate: { $gte: flowDays[0]!, $lte: today },
             },
           },
@@ -566,6 +619,7 @@ export async function getDashboardInsights(
     canAppointments
       ? Appointment.countDocuments(
           tenantScoped(hospitalId, {
+            ...scope.filter,
             appointmentDate: today,
             status: mongoose.trusted({ $in: ["scheduled", "confirmed", "checked_in"] }),
             startMinutes: mongoose.trusted({ $lt: nowMinutes }),
@@ -574,12 +628,17 @@ export async function getDashboardInsights(
       : 0,
     canAppointments
       ? Appointment.countDocuments(
-          tenantScoped(hospitalId, { appointmentDate: today, status: "scheduled" }),
+          tenantScoped(hospitalId, {
+            ...scope.filter,
+            appointmentDate: today,
+            status: "scheduled",
+          }),
         )
       : 0,
     canVisits
       ? Visit.countDocuments(
           tenantScoped(hospitalId, {
+            ...scope.filter,
             followUpDate: mongoose.trusted({ $ne: null, $lt: today }),
           }),
         )
@@ -623,6 +682,7 @@ export async function getDashboardInsights(
     canAppointments
       ? Appointment.countDocuments(
           tenantScoped(hospitalId, {
+            ...scope.filter,
             appointmentDate: mongoose.trusted({ $gt: today }),
             status: "scheduled",
           }),

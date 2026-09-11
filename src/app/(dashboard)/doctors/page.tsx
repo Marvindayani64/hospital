@@ -40,7 +40,6 @@ export default async function DoctorsPage() {
         canUpdate={hasPermission(user, "doctor.update")}
         canDelete={hasPermission(user, "doctor.delete")}
         canViewDepartments={hasPermission(user, "department.view")}
-        canViewUsers={hasPermission(user, "user.view")}
       />
     </div>
   );

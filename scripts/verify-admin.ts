@@ -186,7 +186,12 @@ async function buildTenant(
   });
   const patient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: label, lastName: "Subject", phone: "+919876500200" },
+    body: {
+      firstName: label,
+      lastName: "Subject",
+      phone: "+919876500200",
+      email: `subject.${label.toLowerCase()}.${stamp}@example.test`,
+    },
     jar,
   });
 
@@ -375,6 +380,7 @@ async function main(): Promise<void> {
     accountantStats.json.data.appointments === null,
     JSON.stringify(accountantStats.json?.data?.appointments),
   );
+
 
   // -------------------------------------------------------------------------
   section("Dashboard insights — trends, series, alerts (Section 35)");
@@ -905,6 +911,177 @@ async function main(): Promise<void> {
       (row) => row.name === "Consultation Beta",
     ),
     JSON.stringify(betaReport.json?.data?.topTreatments),
+  );
+
+  // -------------------------------------------------------------------------
+  section("A doctor's dashboard shows only their own appointments");
+
+  /**
+   * The front desk assigns each booking to a clinician. A doctor's dashboard is
+   * their own day: a colleague's patient must not appear on it, even though the
+   * Doctor role holds `appointment.view` for the hospital.
+   */
+  const doctorRoleId = (roles.json.data.items as any[]).find(
+    (r) => r.key === "doctor",
+  ).id as string;
+
+  /** A doctor profile with a login attached, so the dashboard can identify them. */
+  async function clinician(label: string): Promise<{ jar: Jar; doctorId: string }> {
+    const email = `${label}.${stamp}@admin.test`;
+    const created = await call("/api/users", {
+      method: "POST",
+      body: { name: `Dr. ${label}`, email, roleId: doctorRoleId },
+      jar: alpha.jar,
+    });
+    const temp = created.json.data.temporaryPassword as string;
+    const password = `Admin${label}!2024`;
+    const jar = await signIn(email, temp);
+    await call("/api/auth/change-password", {
+      method: "POST",
+      body: { currentPassword: temp, newPassword: password, confirmPassword: password },
+      jar,
+    });
+
+    const profile = await call("/api/doctors", {
+      method: "POST",
+      body: {
+        displayName: `Dr. ${label}`,
+        departmentIds: [alpha.departmentId],
+        userId: created.json.data.member.id,
+      },
+      jar: alpha.jar,
+    });
+    if (profile.status !== 201) {
+      throw new Error(
+        `Could not create ${label}'s profile: ${profile.status} ${JSON.stringify(profile.json?.error ?? "")}`,
+      );
+    }
+    return { jar, doctorId: profile.json.data.id as string };
+  }
+
+  const drOwn = await clinician("own");
+  const drOther = await clinician("other");
+
+  // One booking each, both today, so only the assignment distinguishes them.
+  for (const [doctor, startTime, endTime] of [
+    [drOwn, "11:00", "11:30"],
+    [drOther, "12:00", "12:30"],
+  ] as const) {
+    const booked = await call("/api/appointments", {
+      method: "POST",
+      body: {
+        patientId: alpha.patientId,
+        doctorId: doctor.doctorId,
+        departmentId: alpha.departmentId,
+        appointmentDate: TODAY,
+        startTime,
+        endTime,
+      },
+      jar: alpha.jar,
+    });
+    if (booked.status !== 201) {
+      throw new Error(
+        `Could not book ${startTime}: ${booked.status} ${JSON.stringify(booked.json?.error ?? "")}`,
+      );
+    }
+  }
+
+  const ownStats = await call("/api/dashboard/stats", { jar: drOwn.jar });
+  const ownToday = (ownStats.json.data.todaysAppointments as any[]) ?? [];
+  check(
+    "A doctor sees only the appointment assigned to them",
+    ownToday.length === 1 && ownToday[0].startTime === "11:00",
+    JSON.stringify(ownToday.map((a) => a.startTime)),
+  );
+  check(
+    "Their today count matches what they can see",
+    ownStats.json.data.appointments.today === 1,
+    String(ownStats.json?.data?.appointments?.today),
+  );
+
+  const otherStats = await call("/api/dashboard/stats", { jar: drOther.jar });
+  const otherToday = (otherStats.json.data.todaysAppointments as any[]) ?? [];
+  check(
+    "The other doctor sees only theirs",
+    otherToday.length === 1 && otherToday[0].startTime === "12:00",
+    JSON.stringify(otherToday.map((a) => a.startTime)),
+  );
+
+  /**
+   * Staff who are not clinicians have no doctor profile, so nothing narrows
+   * their view — the front desk still needs the whole day.
+   */
+  const frontDeskStats = await call("/api/dashboard/stats", {
+    jar: receptionJar,
+  });
+  check(
+    "The receptionist still sees the whole hospital's day",
+    (frontDeskStats.json.data.todaysAppointments as any[]).length >= 3,
+    String((frontDeskStats.json?.data?.todaysAppointments as any[])?.length),
+  );
+
+  const ownInsights = await call("/api/dashboard/insights", { jar: drOwn.jar });
+  check(
+    "A doctor's alerts are narrowed the same way",
+    ownInsights.status === 200 &&
+      (ownInsights.json.data.alerts as any[])
+        .filter((a) => a.id === "unconfirmed-today")
+        .every((a) => a.count <= 1),
+    JSON.stringify(
+      (ownInsights.json?.data?.alerts as any[])?.map((a) => [a.id, a.count]),
+    ),
+  );
+
+  /**
+   * The same rule on the listings, not just the dashboard. A doctor opening
+   * Appointments must not find a colleague's booking there — the narrowing is
+   * a rule, not a dashboard-only convenience.
+   */
+  const ownList = await call("/api/appointments?pageSize=100", {
+    jar: drOwn.jar,
+  });
+  check(
+    "The appointments list shows only this doctor's bookings",
+    (ownList.json.data.items as any[]).length > 0 &&
+      (ownList.json.data.items as any[]).every(
+        (a) => a.doctor?.id === drOwn.doctorId,
+      ),
+    JSON.stringify(
+      (ownList.json?.data?.items as any[])?.map((a) => a.doctor?.name),
+    ),
+  );
+
+  /**
+   * Asking for a colleague by id must not lift the narrowing — otherwise it
+   * would only be a default, bypassable by editing the query string.
+   */
+  const spoofed = await call(
+    `/api/appointments?pageSize=100&doctorId=${drOther.doctorId}`,
+    { jar: drOwn.jar },
+  );
+  check(
+    "A doctorId in the query cannot widen what a doctor sees",
+    (spoofed.json.data.items as any[]).every(
+      (a) => a.doctor?.id === drOwn.doctorId,
+    ),
+    JSON.stringify(
+      (spoofed.json?.data?.items as any[])?.map((a) => a.doctor?.name),
+    ),
+  );
+
+  const frontDeskList = await call("/api/appointments?pageSize=100", {
+    jar: receptionJar,
+  });
+  check(
+    "The receptionist still sees every doctor's bookings",
+    new Set(
+      (frontDeskList.json.data.items as any[]).map((a) => a.doctor?.id),
+    ).size > 1,
+    String(
+      new Set(
+        (frontDeskList.json?.data?.items as any[])?.map((a) => a.doctor?.id),
+      ).size,
+    ),
   );
 
   // -------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import {
   getPrescriptionContext,
   listPrescriptions,
 } from "@/services/prescription.service";
+import { ownDoctorId } from "@/lib/rbac/doctor-scope";
 import { todayDateString } from "@/utils/time";
 import { PatientDetail } from "@/app/(dashboard)/patients/[id]/PatientDetail";
 
@@ -63,6 +64,13 @@ export default async function PatientDetailPage({
   // actually holds the permission.
   const today = todayDateString();
 
+  /**
+   * A clinician's own bookings and consultations only, matching the
+   * appointments and visits screens. A patient's record therefore shows the
+   * care THIS doctor gave them, not a colleague's.
+   */
+  const viewerDoctorId = await ownDoctorId(user.userId, user.hospitalId);
+
   const [appointments, visits, prescriptions, prescription] =
     await Promise.all([
       canViewAppointments
@@ -70,10 +78,16 @@ export default async function PatientDetailPage({
             page: 1,
             pageSize: 50,
             patientId: id,
+            viewerDoctorId,
           })
         : null,
       canViewVisits
-        ? listVisits(user.hospitalId, { page: 1, pageSize: 50, patientId: id })
+        ? listVisits(user.hospitalId, {
+            page: 1,
+            pageSize: 50,
+            patientId: id,
+            viewerDoctorId,
+          })
         : null,
       canViewPrescriptions
         ? listPrescriptions(user.hospitalId, {

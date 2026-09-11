@@ -86,7 +86,15 @@ function toSummary(
     id: String(doctor._id),
     displayName: doctor.displayName,
     specialization: doctor.specialization ?? "",
-    userId: doctor.userId ? String(doctor.userId) : null,
+    /**
+     * Taken from the resolved account, NOT from `doctor.userId`.
+     *
+     * Both readers populate that field, so it arrives as `{ _id, name, email }`
+     * rather than an ObjectId — and stringifying it produced the literal
+     * "[object Object]" in every response for a linked doctor. Deriving it from
+     * `linkedAccount` also means the two can never disagree.
+     */
+    userId: linkedAccount?.id ?? null,
     linkedAccount,
     departments,
     consultationFee: toMajorUnits(doctor.consultationFeeMinor, currency),

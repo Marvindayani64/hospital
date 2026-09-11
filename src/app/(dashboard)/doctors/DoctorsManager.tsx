@@ -42,7 +42,6 @@ type Doctor = {
 };
 
 type Department = { id: string; name: string };
-type StaffMember = { id: string; name: string; email: string };
 
 const PAGE_SIZE = 20;
 
@@ -52,20 +51,17 @@ export function DoctorsManager({
   canUpdate,
   canDelete,
   canViewDepartments,
-  canViewUsers,
 }: {
   currency: Currency;
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
   canViewDepartments: boolean;
-  canViewUsers?: boolean;
 }) {
   const toast = useToast();
 
   const [data, setData] = useState<Paginated<Doctor> | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,16 +128,6 @@ export function DoctorsManager({
       .catch(() => setDepartments([]));
     return () => controller.abort();
   }, [canViewDepartments]);
-
-  useEffect(() => {
-    if (!canViewUsers) return;
-    const controller = new AbortController();
-    api
-      .get<Paginated<StaffMember>>("/api/users?pageSize=100", controller.signal)
-      .then((result) => setStaff(result.items))
-      .catch(() => setStaff([]));
-    return () => controller.abort();
-  }, [canViewUsers]);
 
   async function confirmDelete() {
     if (!pendingDelete) return;
@@ -361,7 +347,6 @@ export function DoctorsManager({
         <DoctorEditor
           doctor={editing === "new" ? null : editing}
           departments={departments}
-          staff={staff}
           currency={currency}
           onClose={() => setEditing(null)}
           onSaved={async () => {
@@ -413,7 +398,6 @@ const POPULAR_DEPARTMENTS: readonly string[] = [
 function DoctorEditor({
   doctor,
   departments,
-  staff = [],
   currency,
   onClose,
   onSaved,
@@ -421,7 +405,6 @@ function DoctorEditor({
 }: {
   doctor: Doctor | null;
   departments: Department[];
-  staff?: StaffMember[];
   currency: Currency;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
@@ -431,9 +414,6 @@ function DoctorEditor({
   const editing = doctor !== null;
 
   const [displayName, setDisplayName] = useState(doctor?.displayName ?? "");
-  const [userId, setUserId] = useState(
-    doctor?.userId ?? (doctor?.linkedAccount?.id ?? ""),
-  );
   const [specialization, setSpecialization] = useState(
     doctor?.specialization ?? "",
   );
@@ -533,21 +513,6 @@ function DoctorEditor({
         .slice(0, 8)
     : [];
 
-  const emailOptions = staff.map((member) => ({
-    value: member.id,
-    label: `${member.email} (${member.name})`,
-  }));
-
-  if (
-    doctor?.linkedAccount &&
-    !emailOptions.some((opt) => opt.value === doctor.linkedAccount?.id)
-  ) {
-    emailOptions.unshift({
-      value: doctor.linkedAccount.id,
-      label: `${doctor.linkedAccount.email} (${doctor.linkedAccount.name})`,
-    });
-  }
-
   function clearError(field: string) {
     if (fieldErrors[field]) {
       setFieldErrors((prev) => {
@@ -568,10 +533,6 @@ function DoctorEditor({
       errors.displayName = "Doctor name must be at least 2 characters.";
     } else if (trimmedName.length > 150) {
       errors.displayName = "Doctor name cannot exceed 150 characters.";
-    }
-
-    if (!userId) {
-      errors.userId = "Please select an email for the doctor.";
     }
 
     const trimmedSpec = specialization.trim();
@@ -624,10 +585,17 @@ function DoctorEditor({
     setSaving(true);
     setFieldErrors({});
 
+    /**
+     * `userId` is deliberately absent.
+     *
+     * A doctor profile is attached to a staff account from the Staff screen,
+     * where the account is created. Sending it from here — even as null —
+     * would UNLINK an existing doctor on every edit, because the update only
+     * leaves the link alone when the field is omitted entirely.
+     */
     const payload = {
       displayName: displayName.trim(),
       specialization: specialization.trim(),
-      userId: userId || null,
       departmentIds: [...selectedDepartments],
       consultationFee: Number(fee) || 0,
       availability,
@@ -687,35 +655,6 @@ function DoctorEditor({
           error={fieldErrors.displayName}
           placeholder="Dr. Jane Okafor"
           required
-        />
-
-        <SelectField
-          label="Email"
-          value={userId}
-          onChange={(event) => {
-            const selectedId = event.target.value;
-            setUserId(selectedId);
-            clearError("userId");
-            clearError("email");
-            if (selectedId) {
-              const selectedMember =
-                staff.find((m) => m.id === selectedId) ||
-                (doctor?.linkedAccount?.id === selectedId
-                  ? doctor.linkedAccount
-                  : null);
-              if (selectedMember && !displayName.trim()) {
-                setDisplayName(selectedMember.name);
-                clearError("displayName");
-              }
-            }
-          }}
-          options={[
-            { value: "", label: "Select doctor email" },
-            ...emailOptions,
-          ]}
-          error={fieldErrors.userId || fieldErrors.email}
-          required
-          hint="Select the staff account email for this doctor."
         />
 
         <ComboField

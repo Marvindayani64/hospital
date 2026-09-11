@@ -220,11 +220,18 @@ export function EmailField({
   );
 }
 
+/**
+ * A suggestion is either a plain string — where what is shown is what gets
+ * committed — or a value/label pair, for when the list needs to show more than
+ * the field will hold (a doctor's specialisation beside their name, say).
+ */
+export type ComboSuggestion = string | { value: string; label: string };
+
 export type ComboFieldProps = {
   label: string;
   value: string;
   onValueChange: (value: string) => void;
-  suggestions: readonly string[];
+  suggestions: readonly ComboSuggestion[];
   error?: string;
   hint?: ReactNode;
   placeholder?: string;
@@ -279,9 +286,18 @@ export function ComboField({
 
   const query = value.trim().toLowerCase();
   const matches = suggestions
-    .filter((option) => option.toLowerCase().includes(query))
+    .map((option) =>
+      typeof option === "string" ? { value: option, label: option } : option,
+    )
+    // Typing matches either half, so a doctor is findable by specialisation
+    // even though only their name lands in the field.
+    .filter(
+      (option) =>
+        option.value.toLowerCase().includes(query) ||
+        option.label.toLowerCase().includes(query),
+    )
     // An exact match means there is nothing left to suggest.
-    .filter((option) => option.toLowerCase() !== query)
+    .filter((option) => option.value.toLowerCase() !== query)
     .slice(0, 50);
 
   // Clicking anywhere else dismisses the list.
@@ -327,7 +343,7 @@ export function ComboField({
       const option = matches[highlighted];
       if (option) {
         event.preventDefault();
-        choose(option);
+        choose(option.value);
       }
     }
   }
@@ -375,7 +391,7 @@ export function ComboField({
             className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-lg border border-ink-200 bg-white py-1 shadow-lg"
           >
             {matches.map((option, index) => (
-              <li key={option}>
+              <li key={option.value}>
                 <button
                   type="button"
                   role="option"
@@ -384,7 +400,7 @@ export function ComboField({
                   // close the list before the click registered.
                   onMouseDown={(event) => {
                     event.preventDefault();
-                    choose(option);
+                    choose(option.value);
                   }}
                   onMouseEnter={() => setHighlighted(index)}
                   className={cn(
@@ -394,7 +410,7 @@ export function ComboField({
                       : "text-ink-700 hover:bg-ink-50",
                   )}
                 >
-                  {option}
+                  {option.label}
                 </button>
               </li>
             ))}

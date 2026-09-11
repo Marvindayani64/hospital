@@ -38,6 +38,16 @@ export default async function UsersPage() {
         canCreate={hasPermission(user, "user.create")}
         canUpdate={hasPermission(user, "user.update")}
         canDelete={hasPermission(user, "user.delete")}
+        canViewDoctors={hasPermission(user, "doctor.view")}
+        /**
+         * Attaching the new account to a doctor profile edits that profile, so
+         * it takes `doctor.update` as well — the same permission the doctors
+         * screen requires, and the one the API re-checks.
+         */
+        canLinkDoctors={
+          hasPermission(user, "doctor.view") &&
+          hasPermission(user, "doctor.update")
+        }
       />
     </div>
   );

@@ -3,6 +3,7 @@ import { ok, readJson, route } from "@/lib/api/response";
 import { requirePermission } from "@/lib/rbac/guard";
 import { createVisitSchema, listVisitsSchema } from "@/schemas/visit.schema";
 import { createVisit, listVisits } from "@/services/visit.service";
+import { ownDoctorId } from "@/lib/rbac/doctor-scope";
 import { requestMeta } from "@/utils/request";
 
 export const runtime = "nodejs";
@@ -24,7 +25,10 @@ export const GET = route(async (req: NextRequest) => {
     followUpBefore: searchParams.get("followUpBefore") ?? undefined,
   });
 
-  return ok(await listVisits(user.hospitalId, params));
+  // A clinician sees their own consultations only, taken from the session.
+  const viewerDoctorId = await ownDoctorId(user.userId, user.hospitalId);
+
+  return ok(await listVisits(user.hospitalId, { ...params, viewerDoctorId }));
 });
 
 /**

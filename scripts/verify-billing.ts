@@ -200,7 +200,12 @@ async function buildTenant(
   });
   const patient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: label, lastName: "Payer", phone: "+919876500200" },
+    body: {
+      firstName: label,
+      lastName: "Payer",
+      phone: "+919876500200",
+      email: `payer.${label.toLowerCase()}.${stamp}@example.test`,
+    },
     jar,
   });
 

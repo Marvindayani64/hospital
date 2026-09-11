@@ -212,14 +212,40 @@ async function buildTenant(
   });
   const patient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: label, lastName: "Patient", phone: "+919876500300" },
+    body: {
+      firstName: label,
+      lastName: "Patient",
+      phone: "+919876500300",
+      email: `patient.${label.toLowerCase()}.${stamp}@pharmacy.test`,
+    },
     jar,
   });
   const otherPatient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: `${label}Other`, lastName: "Patient", phone: "+919876500301" },
+    body: {
+      firstName: `${label}Other`,
+      lastName: "Patient",
+      phone: "+919876500301",
+      email: `other.${label.toLowerCase()}.${stamp}@pharmacy.test`,
+    },
     jar,
   });
+
+  // Fail loudly here rather than letting `undefined.id` surface 200 lines later
+  // as an unexplained TypeError.
+  for (const [what, response] of [
+    ["department", department],
+    ["treatment", treatment],
+    ["doctor", doctor],
+    ["patient", patient],
+    ["other patient", otherPatient],
+  ] as const) {
+    if (response.status !== 201) {
+      throw new Error(
+        `Could not create ${what} for ${label}: ${response.status} ${JSON.stringify(response.json?.error ?? response.json)}`,
+      );
+    }
+  }
 
   return {
     jar,
@@ -768,7 +794,12 @@ async function main(): Promise<void> {
   // genuinely no one to sign it.
   const strangerPatient = await call("/api/patients", {
     method: "POST",
-    body: { firstName: "Never", lastName: "Booked", phone: "+919876500399" },
+    body: {
+      firstName: "Never",
+      lastName: "Booked",
+      phone: "+919876500399",
+      email: `never.booked.${stamp}@pharmacy.test`,
+    },
     jar: alpha.jar,
   });
   const noSigner = await call("/api/prescriptions", {
